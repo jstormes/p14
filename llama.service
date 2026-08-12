@@ -1,7 +1,7 @@
 [Unit]
 Description=llama.cpp server - Qwen3.6-35B-A3B Q8_0 (Vulkan, gfx1150)
 Documentation=https://github.com/Nathanw1014/strix-halo-llamacpp
-# Flags follow §9c of cloud1.lan:~/p14s-setup/P14S-NATIVE-INSTALL.md, the
+# Flags follow §9c of refhost:~/p14s-setup/P14S-NATIVE-INSTALL.md, the
 # configuration the 489 t/s prefill figure was measured against.
 After=network-online.target
 Wants=network-online.target

@@ -1,8 +1,8 @@
 # p14 llama.cpp tuning measurements, 2026-08-06.
-# Prompt shape identical to cloud1.lan:~/p14s-setup/toolbox-raw/bench-host.sh
+# Prompt shape identical to refhost:~/p14s-setup/toolbox-raw/bench-host.sh
 # (1500x code line + random nonce => ~18k tokens, cold prefill, max_tokens=300, temp 0.7).
 #
-# CAVEAT: n=2-4 per arm, NOT interleaved. cloud1's protocol is n>=10 across two
+# CAVEAT: n=2-4 per arm, NOT interleaved. refhost's protocol is n>=10 across two
 # interleaved blocks. Adequate for the large effects (DPM, wrapper); NOT adequate to
 # resolve 2-3% differences. Do not cite the 319-vs-458 delta as real.
 #

@@ -23,7 +23,7 @@ matters, and idle battery is untouched the rest of the time.
 
 ---
 
-## 3. §7 of the cloud1 doc is **not** wrong — p14 just never met its precondition
+## 3. §7 of the refhost doc is **not** wrong — p14 just never met its precondition
 
 *Rewritten 2026-08-07 after reading the doc properly. The earlier claim here was mistaken.*
 

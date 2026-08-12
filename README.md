@@ -30,8 +30,10 @@ Host: p14 (ThinkPad P14s, Ryzen AI 9 HX PRO 370 / Radeon 890M, gfx1150, 60 GB, G
 Model: Qwen3.6-35B-A3B Q8_0 + mmproj-BF16, served by `llama.service` (user unit) on
 `127.0.0.1:8080`
 
-Reference documentation lives on **cloud1.lan**:
-`~/p14s-setup/P14S-NATIVE-INSTALL.md` and `~/p14s-setup/toolbox-raw/*.tsv`.
+Reference documentation lives on **refhost** — a separate machine on the local network that holds
+the install guide and the baseline benchmark data this work is measured against. Referred to by
+placeholder throughout; paths are `refhost:~/p14s-setup/P14S-NATIVE-INSTALL.md` and
+`refhost:~/p14s-setup/toolbox-raw/*.tsv`.
 
 ---
 
@@ -57,7 +59,7 @@ the prompt cache spared it a cold prefill.
 
 ## Baseline being measured against
 
-`cloud1.lan:~/p14s-setup/toolbox-raw/p14s-toolbox-sys.tsv`, n=12 over two interleaved
+`refhost:~/p14s-setup/toolbox-raw/p14s-toolbox-sys.tsv`, n=12 over two interleaved
 blocks, 18k-token cold prompt:
 
 | metric | baseline |
@@ -281,7 +283,7 @@ figures in the table above have rep 1 dropped.
 
 ### Resolved 2026-08-07 — the 489 was measured on a configuration p14 has never run
 
-`llama-variant` **does not exist** on cloud1 or on p14, so it could not be read. But the
+`llama-variant` **does not exist** on refhost or on p14, so it could not be read. But the
 doc it belongs to answers all three questions directly, and the gap turns out to be
 explained without either number being wrong.
 
@@ -311,7 +313,7 @@ against kisak Mesa 26.1.5 — has not been reproduced on p14 even once. Neither 
 the build and the driver, which is a bigger change than the ~10% is worth.
 
 **A caveat on the archive.** Every file in `toolbox-raw/` shares the mtime
-`2026-08-05 14:11` — a day *after* the measurements — so cloud1 holds a copied bundle, not
+`2026-08-05 14:11` — a day *after* the measurements — so refhost holds a copied bundle, not
 the original working tree, which is why `llama-variant` is missing. The doc also states
 "No sshd — this is a laptop, everything below is run locally", which contradicts
 `bench-host.sh` driving arms with `ssh "$HOST" "llama-variant $arm"`. That script cannot
@@ -733,7 +735,7 @@ of `TODO.md`.
 |---|---|
 | `llama.service` | the final working unit — **the deliverable** |
 | `llama.service.as-found` | the unit as it was before this investigation, for diffing |
-| `bench-local.sh` | benchmark harness, same prompt shape as cloud1's `bench-host.sh` |
+| `bench-local.sh` | benchmark harness, same prompt shape as refhost's `bench-host.sh` |
 | `bench-results.tsv` | every measurement taken, all arms |
 | `set-dpm-high.sh` | reapplies the DPM setting after a reboot |
 | `llama-slot-save.sh` | snapshots a warm slot to disk — works (425 MiB, 126 ms), but **superseded**: at `-np 1` the slot rarely holds the startup prompt when you ask, so it refuses (`min 20000`) more often than it fires |
@@ -756,7 +758,7 @@ systemctl --user daemon-reload && systemctl --user restart llama.service
 
 ## Benchmark caveat
 
-Measurements here are **n=2–4 per arm, not interleaved**. cloud1's protocol is n≥10 across
+Measurements here are **n=2–4 per arm, not interleaved**. refhost's protocol is n≥10 across
 two interleaved blocks. That is enough to resolve the large effects (DPM, wrapper) but
 **not** a 2–3% difference — which is exactly why the 319-vs-458 comparison is reported as a
 tie rather than a win for either. Re-run with the full protocol before citing any small
