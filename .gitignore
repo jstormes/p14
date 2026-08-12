@@ -1,0 +1,8 @@
+# State/snapshot files: this repo is notes and scripts only. Prompt-cache entries and
+# slot snapshots are hundreds of MiB each and belong in ~/.local/state, not here.
+*.bin
+*.pcache
+*.pcache.tmp
+*.ckpt
+*.gguf
+*.log

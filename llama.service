@@ -1,0 +1,69 @@
+[Unit]
+Description=llama.cpp server - Qwen3.6-35B-A3B Q8_0 (Vulkan, gfx1150)
+Documentation=https://github.com/Nathanw1014/strix-halo-llamacpp
+# Flags follow §9c of cloud1.lan:~/p14s-setup/P14S-NATIVE-INSTALL.md, the
+# configuration the 489 t/s prefill figure was measured against.
+After=network-online.target
+Wants=network-online.target
+# Tied to the desktop session on purpose: GPU access comes from the ACL logind
+# grants the active seat user, not from group membership. Outside a session
+# /dev/dri/renderD128 is unreadable, so this must not start at boot.
+PartOf=graphical-session.target
+After=graphical-session.target
+
+[Service]
+# The toolbox binaries need their own libs on the path or they fail with
+# "error while loading shared libraries: libllama-server-impl.so".
+Environment=LD_LIBRARY_PATH=/opt/llama/strix-toolbox/vulkan/bin
+WorkingDirectory=/opt/llama
+
+# At boot the user manager can start before amdgpu has published the render
+# node. Wait for it rather than failing into a restart loop.
+ExecStartPre=/bin/bash -c 'for i in $(seq 1 30); do [ -r /dev/dri/renderD128 ] && exit 0; sleep 1; done; echo "GPU render node not readable after 30s" >&2; exit 1'
+
+# Directory for persisted slot KV snapshots. /opt/llama is root-owned, so this
+# lives under the user's state dir. Trailing slash on --slot-save-path matters:
+# the server concatenates path + filename without inserting a separator.
+ExecStartPre=/usr/bin/mkdir -p %h/.local/state/llama-slots
+
+# -np 1, changed from 4 on 2026-08-10 and measured, not assumed. One slot means
+# concurrent requests queue instead of racing, and the second one then inherits
+# the first one's prompt cache. That is what makes Qwen Code's startup warm safe:
+# at -np 4 a user who types immediately gets the warm and the real turn on
+# different slots, both prefilling in full — 81.8 s at 0% cached against ~40.6 s
+# for not warming at all, so the warm cost double. At -np 1 the same race gives
+# 40.5 s at 99.9% cached: worst case equals not warming, best case is ~1 s.
+# It also removes the contention seen in the journal, where overlapping prefills
+# ran at 217–241 t/s against 339–351 t/s alone.
+# Trade-off accepted: background fastModel/compaction requests and subagent forks
+# now serialise behind the user's turn. Single-user box, so contention was the
+# larger cost. Harness: ~/p14/warm-tests/race-probe.py; table in TODO.md item 6.
+ExecStart=/opt/llama/strix-toolbox/vulkan/llama-server \
+  --host 127.0.0.1 --port 8080 \
+  -m /models/Qwen3.6-35B-A3B-Q8_0.gguf \
+  -a Qwen3.6-35B-A3B \
+  --mmproj /models/mmproj-BF16.gguf \
+  -ngl 999 --fit off --no-mmap \
+  --cache-ram 8192 \
+  --slot-save-path %h/.local/state/llama-slots/ \
+  --cache-type-k q8_0 --cache-type-v q8_0 \
+  -c 262144 -b 8192 -ub 1024 -np 1 -fa 1 -kvu \
+  --spec-type draft-mtp --spec-draft-n-max 2 \
+  --spec-draft-type-k q8_0 --spec-draft-type-v q8_0 \
+  --jinja --reasoning-budget 2048 \
+  --temp 1.0 --top-p 0.95 --top-k 20 --min-p 0.0 \
+  -dev Vulkan0
+
+# NOT wired up: ExecStartPost=-%h/p14/llama-slot-restore.sh
+# Slot restore is a no-op on build 458. Proven 2026-08-07 with a client-independent
+# probe: an identical 9913-token request hits 9909 cached on a live server, but
+# 0 cached after save -> restart -> restore. Ruled out as causes: --mmproj (#21133),
+# -np (tested 1, 2 and 4), cache_prompt/n_keep=-1, and Qwen Code itself.
+# --slot-save-path is left set so the experiment can be repeated after a llama.cpp
+# upgrade without re-editing the unit; it is inert unless the /slots API is called.
+
+Restart=on-failure
+RestartSec=10
+
+[Install]
+WantedBy=graphical-session.target

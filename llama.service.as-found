@@ -1,0 +1,38 @@
+[Unit]
+Description=llama.cpp server - Qwen3.6-35B-A3B Q8_0 (Vulkan, gfx1150)
+Documentation=https://github.com/Nathanw1014/strix-halo-llamacpp
+After=network-online.target
+Wants=network-online.target
+# Tied to the desktop session on purpose: GPU access comes from the ACL logind
+# grants the active seat user, not from group membership. Outside a session
+# /dev/dri/renderD128 is unreadable, so this must not start at boot.
+PartOf=graphical-session.target
+After=graphical-session.target
+
+[Service]
+# The toolbox binaries need their own libs on the path or they fail with
+# "error while loading shared libraries: libllama-server-impl.so".
+Environment=LD_LIBRARY_PATH=/opt/llama/strix-toolbox/vulkan/bin
+WorkingDirectory=/opt/llama
+
+# At boot the user manager can start before amdgpu has published the render
+# node. Wait for it rather than failing into a restart loop.
+ExecStartPre=/bin/bash -c 'for i in $(seq 1 30); do [ -r /dev/dri/renderD128 ] && exit 0; sleep 1; done; echo "GPU render node not readable after 30s" >&2; exit 1'
+
+ExecStart=/opt/llama/strix-toolbox/vulkan/bin/llama-server \
+  -m /models/Qwen3.6-35B-A3B-Q8_0.gguf \
+  -a Qwen3.6-35B-A3B \
+  --mmproj /models/mmproj-BF16.gguf \
+  -ngl 99 \
+  -c 262144 \
+  -ctk q8_0 -ctv q8_0 \
+  -kvu \
+  --spec-type draft-mtp \
+  --host 127.0.0.1 \
+  --port 8080
+
+Restart=on-failure
+RestartSec=10
+
+[Install]
+WantedBy=graphical-session.target

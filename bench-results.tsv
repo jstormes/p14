@@ -1,0 +1,87 @@
+# p14 llama.cpp tuning measurements, 2026-08-06.
+# Prompt shape identical to cloud1.lan:~/p14s-setup/toolbox-raw/bench-host.sh
+# (1500x code line + random nonce => ~18k tokens, cold prefill, max_tokens=300, temp 0.7).
+#
+# CAVEAT: n=2-4 per arm, NOT interleaved. cloud1's protocol is n>=10 across two
+# interleaved blocks. Adequate for the large effects (DPM, wrapper); NOT adequate to
+# resolve 2-3% differences. Do not cite the 319-vs-458 delta as real.
+#
+# Rows marked probe=1 had concurrent sysfs polling (sclk/power/temp) during the run.
+#
+# Baseline for comparison, from p14s-toolbox-sys.tsv (n=12): PP 485-493, TG 21.5
+#
+# arm meanings:
+#   as-found          raw binary, DPM auto, original flags (-ngl 99 -c 262144 -ctk/-ctv q8_0 -kvu --spec-type draft-mtp)
+#   flags-only        + all P14S-NATIVE-INSTALL.md sec9c server flags, DPM still auto
+#   dpm-high-battery  + power_dpm_force_performance_level=high, on battery
+#   dpm-high-ac       same, on AC power
+#   no-mmproj         AC + DPM high, --mmproj removed (vision disabled; capabilities showed ['completion'])
+#   wrapper-b458      AC + DPM high, launched via vulkan/llama-server wrapper (bundled Mesa 26.3.0 + 7 GGML_VK vars)
+#   wrapper-b319      same, but toolbox v0.2 build 319 (54d76da) from /opt/llama/strix-toolbox-v0.2
+#   sysmesa-envon     ISOLATION ARM: system Mesa 26.0.3, but 7 GGML_VK vars set explicitly.
+#                     Separates "env vars" from "driver swap" in the wrapper's ~8% gain.
+#   kisak-mesa-26.1.6 Mesa 26.1.6 from the kisak-mesa PPA, extracted from the .deb into a
+#                     private dir and selected via VK_ICD_FILENAMES. NOT installed system-wide.
+#
+arm	idx	probe	prompt_n	cache_n	PP	TG	draft_pct
+as-found	1	0	18037	0	232.66	16.313	68.03
+as-found	2	0	18039	0	224.83	16.413	65.78
+flags-only	1	0	18037	0	234.41	16.229	70.85
+flags-only	2	0	18039	0	233.33	16.569	72.13
+flags-only	3	0	18040	0	237.64	17.672	78.11
+flags-only	4	1	18037	0	240.43	17.531	78.88
+dpm-high-battery	1	0	18038	0	402.82	19.873	67.98
+dpm-high-battery	2	0	18038	0	391.19	21.171	76.27
+dpm-high-battery	3	0	18038	0	395.32	20.910	75.21
+dpm-high-battery	4	1	18037	0	405.47	21.941	81.50
+dpm-high-ac	1	1	18039	0	408.88	20.965	72.84
+dpm-high-ac	2	1	18036	0	395.74	21.660	77.35
+dpm-high-ac	3	1	18037	0	391.97	20.937	72.84
+no-mmproj	1	0	18036	0	387.55	19.212	82.30
+no-mmproj	2	0	18037	0	386.17	21.340	77.02
+no-mmproj	3	0	18037	0	383.04	20.697	72.84
+wrapper-b458	1	0	18037	0	429.25	20.019	77.02
+wrapper-b458	2	0	18040	0	425.02	22.293	80.35
+wrapper-b458	3	0	18037	0	433.35	21.585	76.69
+wrapper-b319	1	0	18038	0	447.18	20.892	74.17
+wrapper-b319	2	0	18038	0	425.17	21.506	76.69
+wrapper-b319	3	0	18038	0	434.30	21.950	80.70
+wrapper-b319	4	0	18039	0	441.80	20.234	74.17
+sysmesa-envon	1	0	18039	0	406.80	20.846	73.14
+sysmesa-envon	2	0	18039	0	404.55	20.781	73.55
+sysmesa-envon	3	0	18038	0	400.53	21.152	75.63
+kisak-mesa-26.1.6	1	0	18040	0	442.01	19.688	74.90
+kisak-mesa-26.1.6	2	0	18038	0	446.39	20.997	73.86
+kisak-mesa-26.1.6	3	0	18037	0	445.78	22.021	78.88
+kisak-mesa-26.1.6	4	0	18035	0	433.08	20.714	75.95
+#
+# Mesa driver ranking (all: build 458, DPM high, AC, 7 GGML_VK vars set):
+#   system 26.0.3   400-407 PP  (mean 404)
+#   bundled 26.3.0  425-433 PP  (mean 429)   <- currently in use
+#   kisak  26.1.6   433-446 PP  (mean 442)   <- best; vindicates the doc's 26.1.5 pin
+# The GGML_VK env vars themselves are worth ~0% on build 458 (392-409 -> 400-407, noise):
+# the binaries already default them on since fork commit 0b29b30. The wrapper's ~8% gain
+# was almost entirely the DRIVER SWAP, not the vars.
+#
+# GPU telemetry sampled under sustained load:
+#   DPM auto : sclk ~1150 MHz, 100% busy, 13 W
+#   DPM high : sclk  2900 MHz,  ~99% busy, 49-58 W, 68-89 C
+#   baseline (p14s-platform-profile.tsv): sclk 2436-2900 MHz, 38-62 W, 78-93 C
+#
+# ---------------------------------------------------------------------------
+# External reference: kyuz0/amd-strix-halo-toolboxes, same 35B-A3B model.
+# DIFFERENT SILICON: Radeon 8060S (gfx1151, 40 CU) vs p14's 890M (gfx1150, 16 CU).
+# Method also differs: llama-bench pp2048 @ fixed KV depth, not a full-prefill average.
+# Absolute values do NOT transfer; included for backend ranking and scale check only.
+#
+# backend                        depth 0   depth 16384   depth 32768
+#   vulkan-radv-performance       1298.6       1023.0        698.7    <- Nathanw1014 fork = ours
+#   rocm-7.14                     1482.6       1017.1        736.2
+#   rocm-7.14-pr26592             1492.4        968.8        619.9
+#   rocm-7.2.4 default profile    1215.1        908.6        649.3
+#   rocm-7.2.4 perf + iommu=off   1511.0       1023.6        761.0
+#
+# llama-bench, 35B-A3B Q8, fa1, d32768 -- RADV vs AMDVLK prefill:
+#   vulkan_radv    682.80 t/s      vulkan_amdvlk   307.07 t/s
+#   (AMDVLK is 2.2x SLOWER for prefill; the repo README's "fastest backend" claim
+#    does not hold for MoE prompt processing.)
