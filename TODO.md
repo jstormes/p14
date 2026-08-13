@@ -266,3 +266,27 @@ Code: **https://github.com/jstormes/llama.cpp** branch `p14/disk-prompt-cache`
 Warm-on-startup already collected the latency win. What this adds is surviving the
 `llama.service` restart that happens at every login, for **any** client rather than only the
 forked Qwen Code. It does not make a first turn faster on a launch where the warm had time to run.
+
+---
+
+## 8. ⏳ Open 2026-08-12 — Playwright MCP is in, two things unmeasured
+
+Setup and the prompt-cost measurement are in `README.md` → "Client ops — 2026-08-12". It costs
+**632 tokens** of startup prompt against computer use's 1,363, and it works on this box where
+computer use could not. Two loose ends, both cheap to close:
+
+1. **Headed Chromium against ~6 GB free.** `playwright-mcp` is **headed by default** and
+   `args: []` takes that default, so the first `browser_navigate` launches a full visible
+   Chromium on a box sitting at 54/60 GB with the model resident — the same wall that blocked
+   `image-gen.md`. Not yet tried under load. If it fails or pushes the model out of GTT, add
+   `--headless` first, then `--isolated` (profile in RAM, not on disk). Measure RSS during an
+   actual browse before assuming either is needed.
+
+2. **Does the ~370 ms MCP handshake sit on the launch critical path?** qwen-code discovers MCP
+   tools progressively (`client.ts` re-scans history in `setTools()` because "progressive MCP
+   discovery registers tools after a resumed chat has already been constructed"), so it may well
+   overlap the startup warm rather than delay it. Until that is confirmed, do not claim launch
+   time is unchanged — and note it interacts with §6: the warm and the MCP handshake fire at
+   roughly the same moment.
+
+Both are launch-time/memory questions, not correctness ones. Nothing is broken today.

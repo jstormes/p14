@@ -731,8 +731,12 @@ of `TODO.md`.
 
 ## Client ops — 2026-08-12
 
-Three changes to the `~/code/qwen-code` side of the project. None of them are research; they are
+Four changes to the `~/code/qwen-code` side of the project. None of them are research; they are
 the state of the install on this box, recorded so the next session does not have to re-derive it.
+
+Two of them move the startup prompt, in opposite directions. Net for the day: **−731 tokens**
+(computer use off, −1,363; Playwright MCP on, +632), or about 2 s of cold prefill at the
+~357 tok/s ceiling.
 
 ### Synced the fork to upstream v0.21.10
 
@@ -848,6 +852,77 @@ limitations above describe newer builds and may not all apply to 0.5.2.
 
 Sources: [Inside Linux computer-use](https://cua.ai/blog/inside-linux-computer-use) (Cua),
 [#5922](https://github.com/QwenLM/qwen-code/issues/5922).
+
+### Added Playwright MCP + Chromium — costs 632 tokens, and it actually works here
+
+The replacement for what computer use was supposed to do. Browser automation via
+`@playwright/mcp`, driving its own bundled Chromium rather than the desktop.
+
+```json
+"mcpServers": { "playwright": { "command": "playwright-mcp", "args": [] } }
+```
+
+| | |
+|---|---|
+| package | `@playwright/mcp@0.0.79`, global npm install, binary `playwright-mcp` on PATH |
+| browsers | `~/.cache/ms-playwright/` — `chromium-1234` (389 MB), `chromium_headless_shell-1234` (262 MB), `ffmpeg-1011` (4.9 MB); **656 MB total** |
+| unrelated | `/usr/bin/google-chrome` is the system browser and is *not* what this drives by default |
+
+**Why this works where computer use did not:** Playwright drives a browser it ships and controls
+over CDP. It never touches AT-SPI, never needs `toolkit-accessibility`, and does not care that this
+is a Wayland session or that Ubuntu 26.04 is off the vendor's verified list — all three of the
+blockers in the section above. The trade is scope: browsers only, not the desktop.
+
+#### Prompt cost — measured the same way as computer use
+
+MCP tools are deferred too (`shouldDefer: true`, `packages/core/src/tools/mcp-tool.ts:823`,
+"discovered via ToolSearch to keep the initial tool-declaration list small"), so the same rule
+applies: schemas stay out of the declaration list, but every tool is advertised by name and
+truncated first-line description in the startup reminder, under a `#### playwright` heading.
+
+Tool list pulled from the live server over stdio JSON-RPC, rendered with the real truncation rule,
+tokenized against the running llama.cpp server:
+
+| | computer use (removed) | playwright (added) |
+|---|---|---|
+| tools | 35 | **24** |
+| descriptions truncated at 160 | 23 | **1** |
+| rendered block | 5,880 chars | **2,494 chars** |
+| **real tokens** | 1,363 | **632** |
+| share of the ~41.6k prompt | ~3.3% | **~1.5%** |
+| prefill at ~357 tok/s | ~3.8 s | **~1.8 s** |
+
+**Less than half the prompt cost for a capability that is actually reachable on this hardware.**
+Names are the long part — `mcp__playwright__browser_navigate_back` and friends — not the
+descriptions, which is why only one of the 24 hits the 160-char cut.
+
+#### Runtime cost
+
+| | measured |
+|---|---|
+| MCP handshake | `initialize` ~370 ms, `tools/list` ~380 ms (n=3, tight spread) |
+| idle server RSS | 109 MB |
+| idle server CPU | **1.33%** steady state over 15 s (n=1) |
+| browser at idle | **none** — launches lazily on first `browser_*` call |
+
+The idle CPU is worth stating precisely, because the first number you get is wrong: `ps %cpu`
+reports 21.6%, but that is a lifetime average dominated by startup. Sampled properly from
+`/proc/<pid>/stat` over a 15 s window after settling, it is 1.33%. Real, but not the
+7–8% persistent poll that got cua-driver removed — and the browser genuinely does not run until
+asked, so there is no idle Chromium.
+
+**The one to watch is memory, not CPU.** This box is at **54 GB used of 60, ~6 GB available** with
+the model resident, and `image-gen.md` is already blocked on exactly that. `playwright-mcp`
+defaults to **headed** — `--headless` is opt-in, and `args: []` takes the default — so the first
+`browser_navigate` launches a full visible Chromium against that ~6 GB. Not yet measured under
+load. If launches start failing or the model gets pushed out of GTT, add `--headless` (or
+`--isolated` to keep the profile in RAM rather than on disk) as the first thing to try.
+
+Also unmeasured: whether the ~370 ms handshake lands on the launch critical path. qwen-code
+discovers MCP tools progressively — `client.ts` re-scans history in `setTools()` precisely because
+"progressive MCP discovery registers tools after a resumed chat has already been constructed" — so
+it plausibly overlaps the startup warm rather than delaying it. Worth confirming before treating
+launch time as unchanged.
 
 ---
 
