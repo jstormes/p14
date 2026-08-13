@@ -729,6 +729,128 @@ of `TODO.md`.
 
 ---
 
+## Client ops — 2026-08-12
+
+Three changes to the `~/code/qwen-code` side of the project. None of them are research; they are
+the state of the install on this box, recorded so the next session does not have to re-derive it.
+
+### Synced the fork to upstream v0.21.10
+
+`main` fast-forwarded 75 commits (`8c90697ace` → `4a281f2efc`, v0.21.9 → v0.21.10) and
+`p14/prefill-progress` was rebased onto it. **The rebase was clean — no conflicts**, and the three
+commits are byte-identical to their pre-sync versions.
+
+Six files were touched by both sides: `core/client.ts`, `openaiContentGenerator/pipeline.ts`, both
+`config.ts`, `settingsSchema.ts`, `core/index.ts`. A clean rebase is not proof the hooks still sit
+in the right place, so the risky one was checked by hand: upstream's *"restore deferred MCP tools
+on resumed sessions"* (#8475) edits `setTools()`, while the startup warm hangs off the end of
+`initialize()` — different function, hook still correct.
+
+| check | result |
+|---|---|
+| `npm run typecheck` | clean, all 10 workspaces |
+| `npm run lint` | clean |
+| `npm run build` + `npm run bundle` | succeeds, binary runs |
+| prefill tests (core + CLI) | 16 + 37 pass |
+| `client.test.ts`, `forkedAgent` | 322 pass |
+| `openaiContentGenerator/` incl. `pipeline` | 824 pass |
+| `config.test.ts`, `settingsSchema.test.ts` | 519 + 40 pass |
+
+A fourth commit was added on top: **`test(core): mock getWarmStartupPrompt in the client test
+config`**. The startup warm reads `config.getWarmStartupPrompt()` from `initialize()`, but the
+shared mock config in `client.test.ts` never gained the getter, so every `initialize()` threw into
+the warm's fire-and-forget catch — **330 unhandled errors across the suite, while all 322 tests
+still passed**. The errors were pre-existing (they predate this sync; upstream just added more
+tests, so the count grew). Worth knowing what the fix does *not* buy: mocking it to `false` stops
+the noise but the warm still returns early, so `runForkedAgent`, `preserveTools: true` and
+`maxOutputTokens: 1` remain uncovered by `client.test.ts`. The 330 errors were hiding that gap,
+not filling it — see item 2 of TODO §6, still open.
+
+**This sync used rebase, not the merge-while-testing convention**, and was force-pushed with
+`--force-with-lease`. Consequence, stated because it is the exact thing that convention exists to
+avoid: every SHA on the branch changed, so any build or measurement taken against the old commits
+no longer refers to anything. Pre-sync state is recoverable from the local tag
+`backup/pre-upstream-sync-20260812` in `~/code/qwen-code` until it is deleted.
+
+### `qwen` on PATH now runs this repo
+
+It previously resolved to a **stock npm install of v0.21.7 from 2026-08-06** — none of the prefill
+work, none of the upstream update. It is now `npm link`ed: `qwen` → `~/code/qwen-code`, confirmed
+by `qwen --version` reporting `0.21.10` from outside the repo.
+
+Two consequences: the command **follows whatever branch is checked out** (switch to `main` and the
+prefill feature is gone), and it **serves `dist/`, not `src/`** — source edits need
+`npm run build && npm run bundle` before `qwen` sees them. Use `npm run dev` to run from
+TypeScript directly. Restore the published build with `npm i -g @qwen-code/qwen-code`.
+
+### Disabled computer use — worth 1,363 tokens of startup prompt
+
+Set in `~/.qwen/settings.json`:
+
+```json
+"tools": { "computerUse": { "enabled": false } }
+```
+
+This is a hard gate, not cosmetic hiding. At `packages/core/src/config/config.ts:8447` the flag
+wraps the entire registration, so with it false the module is never even dynamically imported:
+
+```ts
+if (this.isComputerUseEnabled()) {
+  const { registerComputerUseTools } = await import('../tools/computer-use/index.js');
+  await registerComputerUseTools(registerLazy, this);
+}
+```
+
+**Why it belongs in this project's record rather than being a matter of taste:** the 35
+`computer_use__*` tools are *deferred* built-ins, so their JSON schemas are correctly absent from
+the function-declaration list — but every deferred tool is still advertised by name and
+description in the startup reminder, via `getDeferredToolSummary()`, so the model knows what
+`tool_search` can reach. That block is part of the ~41.6k prefix this whole project exists to
+avoid paying for.
+
+Measured, not estimated — the rendered block was reconstructed with the real truncation rule
+(`MAX_DEFERRED_TOOL_DESC_LEN = 160`, first line only; 23 of the 35 descriptions get cut) and fed
+to the running server's `/tokenize` endpoint, so this is the actual Qwen tokenizer:
+
+| | |
+|---|---|
+| tools registered | 35 |
+| rendered reminder block | 5,880 chars |
+| **real tokens** | **1,363** (4.31 chars/token) |
+| share of the ~41.6k startup prompt | ~3.3% |
+| prefill time at the ~357 tok/s ceiling | **~3.8 s** |
+
+So this is a small, permanent, free win on every cold prefill — the same class of win as the rest
+of the project, and it costs nothing because the tools were never usable on this box anyway:
+
+- **Ubuntu 26.04 is outside the vendor's verified matrix.** Cua verifies Debian 12, Ubuntu 22.04
+  and 24.04, Rocky 9, Fedora 41.
+- **This is a Wayland session** (`XDG_SESSION_TYPE=wayland`, GNOME). The native Wayland backend is
+  preview-only behind `CUA_DRIVER_RS_ENABLE_WAYLAND=1`; X11/XWayland is the supported production
+  path, and native-Wayland-only apps may be invisible to the driver entirely.
+- **`toolkit-accessibility` is `false`** (the GNOME default). Without it the driver "loses the
+  element tree that makes the backend useful" — it cannot read controls, so clicks and typing have
+  nothing to aim at. `at-spi2-core` 2.60.4 *is* installed, and glibc 2.43 clears the 2.31 floor.
+
+There is also one real upstream bug, [QwenLM/qwen-code#5922](https://github.com/QwenLM/qwen-code/issues/5922)
+(closed): the driver is spawned as a persistent child on first use and burned ~7–8% CPU while
+qwen-code sat idle. Triage put the cause in the daemon's own polling loop in `cua-driver-rs`, not
+in qwen-code — so it is not Windows-specific despite being reported there. `computerUse.idleTimeoutMs`
+(default 300000) reaps the process; disabling outright avoids it. On a battery-powered laptop
+running a local model, an idle 8% CPU poll is not a rounding error. No Ubuntu- or Linux-specific
+bug reports exist for this package.
+
+The driver binary itself is still on disk at
+`~/.qwen/computer-use/cua-driver-rs-0.5.2/cua-driver` (12 MB, fetched 2026-06-04). It is now inert
+— nothing will launch it — but deleting it means re-downloading if this is ever re-enabled. The
+pin is `CUA_DRIVER_VERSION = '0.5.2'` while the vendored contract package is 0.17.0, so the Linux
+limitations above describe newer builds and may not all apply to 0.5.2.
+
+Sources: [Inside Linux computer-use](https://cua.ai/blog/inside-linux-computer-use) (Cua),
+[#5922](https://github.com/QwenLM/qwen-code/issues/5922).
+
+---
+
 ## Files here
 
 | file | what it is |

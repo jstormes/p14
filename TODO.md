@@ -73,8 +73,15 @@ attributed to the governor alone.
 
 ## 6. ✅ Built and validated 2026-08-08 — warm the Qwen Code startup prompt
 
-**Committed as `cd5dacb984` on branch `warm-startup-prompt` in `~/code/qwen-code`. Not pushed.
-Off by default (`model.warmStartupPrompt`), so nothing has changed for normal use.**
+**Now four commits on branch `p14/prefill-progress` in `~/code/qwen-code`, pushed to
+`origin/p14/prefill-progress`. Off by default (`model.warmStartupPrompt`), so nothing has changed
+for normal use.**
+
+> **SHAs below are stale.** This item was written against `cd5dacb984` on the since-deleted
+> `warm-startup-prompt` branch. The work was rebased onto upstream v0.21.10 on 2026-08-12 and
+> force-pushed, so every commit hash changed. The measurements still stand — the rebase was clean
+> and the commits are byte-identical — but do not expect those hashes to resolve. See
+> "Client ops — 2026-08-12" in `README.md`.
 
 Measured end-to-end with the real client and the real ~34.8k prompt:
 
@@ -129,7 +136,10 @@ Measured end-to-end with the real client and the real ~34.8k prompt:
    — see `disk-cache.md`.
 2. **Write a unit test pinning `preserveTools: true`.** It is the silent-failure trap: drop it
    and there is no error, just no speedup. Nothing currently guards it.
-3. **Run `npm run test:ci`** — only build/typecheck/pre-commit lint have run.
+3. **Run `npm run test:ci`** — still not run. As of the 2026-08-12 upstream sync, typecheck, lint,
+   build, bundle and the directly affected suites all pass (`client.test.ts`,
+   `openaiContentGenerator/`, `config`, `settingsSchema`, both prefill test files — see
+   `README.md`), but the full CI suite has never been run against this branch.
 4. Untested paths: resumed sessions (they warm too), and headless `-p` (different system
    prompt per `README.md:501`).
 5. **Then** log launch→first-message gaps over ~10 real launches. That number, not argument,
@@ -139,8 +149,8 @@ Test harness preserved in `~/p14/warm-tests/` (`warm-step1.sh` = warm only, `war
 real turn with warm off, `cache-probe.py` = the raw HTTP probe, `race-probe.py` = the warm-vs-
 first-turn race, one run per `-np` setting).
 
-**Also built 2026-08-10 — prefill progress in the UI** (branch `prefill-progress`, two commits
-on top of `warm-startup-prompt`, not pushed). llama.cpp already streams
+**Also built 2026-08-10 — prefill progress in the UI** (the two commits on top of the warm, now
+part of `p14/prefill-progress` and pushed). llama.cpp already streams
 `prompt_progress {total, cache, processed, time_ms}` when a request sets `return_progress: true`;
 nothing consumed it, because those chunks carry an empty delta and the content path discards
 them. The client now renders them as a bar in place of the loading phrase, including during a
