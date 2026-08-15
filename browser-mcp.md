@@ -195,8 +195,13 @@ which the `--help` states also covers the case where `CI` is set:
 ```
 
 On a project whose whole premise is a local model, shipping traced URLs to a third party by default
-is worth an explicit opt-out. **`--performanceCrux` was left at its default and is still on** — it
-is a separate flag and was not disabled. Close it too if traces will ever run against private hosts.
+is worth an explicit opt-out.
+
+**`--performanceCrux` closed 2026-08-14**, in both clients. It is a separate flag from the usage
+statistics and needed its own opt-out. Both spellings work — `--no-performance-crux` (kebab, what
+the server's own startup banner suggests) and `--performanceCrux=false` (camel, what `--help`
+prints). The kebab form is used in both configs. Verification is direct rather than inferred: the
+banner drops its CrUX line once the flag is set.
 
 **Enabled `--memoryDebugging`.** The 12 heap-snapshot tools are opt-in, so the default footprint is
 smaller than the raw tool list suggests. Turned on because leak-hunting is a main reason to carry
@@ -273,7 +278,7 @@ sessions were live and either could have rewritten it from memory on exit.
   the local server's `/tokenize`. No equivalent figure is recorded here — Claude Code's deferred
   tool mechanism differs, and no measurement was taken. The 96-tool count is *not* a token count
   and should not be presented as one.
-- **`--performanceCrux` is still on** (see Decisions).
+- ~~`--performanceCrux` is still on~~ — **closed 2026-08-14**, see Decisions.
 - **Whether the ~340 ms handshakes land on the launch critical path**, now ×3 servers.
 - **Sandbox.** Chrome launches with `--no-sandbox` — stock Playwright behaviour
   (`chromiumSandbox` defaults false), not a local misconfiguration. Unprivileged user namespaces
