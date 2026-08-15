@@ -969,7 +969,7 @@ launch time as unchanged.
 | `TODO.md` | open items |
 | `disk-cache.md` | source read of the prompt-cache code, the L2 disk-tier design, and the 2026-08-11 root cause + implementation |
 | `zed-sampling.md` | the 2026-08-14 Zed llama.cpp-provider work — per-profile sampling params, freezing the system prompt's date per thread (it was breaking the prompt cache once a day), the thinking toggle that did nothing on this provider, and `repetition_penalty` being silently dropped by llama-server. Builds on `disk-cache.md`; keeps the wrong turns, including three tests that lied |
-| `browser-mcp.md` | the 2026-08-14 Claude Code browser + JS-debug MCP stack — Playwright, chrome-devtools, mcp-debugger; the rev-1234/1237 mismatch this section got wrong; and the global-install coupling between the two clients |
+| `browser-mcp.md` | the 2026-08-14 browser + JS-debug MCP stack for **Claude Code and Zed** — Playwright, chrome-devtools, mcp-debugger; the rev-1234/1237 mismatch this section got wrong; the global-install coupling across all three clients; and the measurement that matters most here — **Zed sends full tool schemas, so the same three servers cost 17,626 tokens, ~42% of the startup prompt**, against 632 for Playwright under qwen-code's deferred tools |
 | `voice-asr.md` | local speech-to-text investigation — whisper.cpp + Qwen3-ASR, and why Qwen Code cannot yet use either |
 | `image-gen.md` | local text-to-image — stable-diffusion.cpp + Z-Image-Turbo, built and staged but blocked on memory |
 

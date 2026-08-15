@@ -1,11 +1,18 @@
-# Browser and JS-debug MCP — the Claude Code stack, 2026-08-14
+# Browser and JS-debug MCP — the Claude Code and Zed stack, 2026-08-14
 
 Companion to the `## Client ops — 2026-08-12` section of `README.md`, which covers the **qwen-code**
-Playwright MCP setup. This file covers a different client — **Claude Code** (`~/.claude.json`) — and
-a wider brief: browser testing *and* JavaScript debugging.
+Playwright MCP setup. This file covers two more clients — **Claude Code** (`~/.claude.json`) and
+**Zed** (`~/.config/zed/settings.json`) — and a wider brief: browser testing *and* JavaScript
+debugging.
 
-The two clients share one global npm install and one browser cache. That coupling is the least
-obvious thing in this document, so it has its own section.
+Two things here are worth more than the setup steps, and each has its own section:
+
+- **All three clients share one global npm install and one browser cache.** That coupling is the
+  least obvious failure mode on this box.
+- **Zed prices these tools an order of magnitude higher than the other two clients do.** Measured
+  against the running server's `/tokenize`: **17,626 tokens, ~42% of the ~41.6k startup prompt.**
+  That is the single largest prompt regression this project has measured, and it is the reason the
+  Zed setup is built around profiles rather than global enablement.
 
 ---
 
@@ -86,28 +93,32 @@ Final config — direct binary, pinned browser, devtools caps on:
 }
 ```
 
-## Two clients, one binary — the coupling worth knowing
+## Three clients, one binary — the coupling worth knowing
 
 This is the part that will bite later.
 
-`playwright-mcp` is a **single global npm install** shared by qwen-code and Claude Code, and both
-resolve browsers out of the **same** `~/.cache/ms-playwright/`. They differ only in launch args:
+`playwright-mcp` is a **single global npm install** shared by all three clients, and each resolves
+browsers out of the **same** `~/.cache/ms-playwright/`. They differ only in how they are invoked:
 
-| | qwen-code (`~/.qwen/settings.json`) | Claude Code (`~/.claude.json`) |
-|---|---|---|
-| args | `--browser chrome --executable-path /usr/bin/chromium-browser` | `--isolated --headless --browser chromium --caps devtools` |
-| browser | snap Chromium 151.0.7922.108 | Chrome for Testing 152.0.7977.8 (rev 1237) |
-| uses `ms-playwright` cache | **no** | yes |
+| | qwen-code (`~/.qwen/settings.json`) | Claude Code (`~/.claude.json`) | Zed (`~/.config/zed/settings.json`) |
+|---|---|---|---|
+| invocation | `playwright-mcp` shim | `playwright-mcp` shim | **absolute `node` + absolute `cli.js`** |
+| args | `--browser chrome --executable-path /usr/bin/chromium-browser` | `--isolated --headless --browser chromium --caps devtools` | same as Claude Code |
+| browser | snap Chromium 151.0.7922.108 | Chrome for Testing 152.0.7977.8 (rev 1237) | Chrome for Testing 152.0.7977.8 (rev 1237) |
+| uses `ms-playwright` cache | **no** | yes | yes |
 
 **Consequence:** upgrading the global `@playwright/mcp` changes the required browser revision for
-*both* clients at once, and silently breaks whichever one uses the bundled cache until
-`playwright install` is re-run. The other client keeps working, because an explicit
-`--executable-path` bypasses the cache entirely. That asymmetry is exactly how the 1234/1237
-mismatch went unnoticed.
+*all three* clients at once, and silently breaks whichever ones use the bundled cache until
+`playwright install` is re-run. qwen-code keeps working, because an explicit `--executable-path`
+bypasses the cache entirely. That asymmetry is exactly how the 1234/1237 mismatch went unnoticed.
 
-If the two clients ever need to move independently, the fix is to stop sharing the global install —
-pin each client to its own `npx -y @playwright/mcp@<version>`, accepting the extra process
-per launch.
+Zed is additionally coupled to the **nvm node version in its path strings**. `v22.23.2` is written
+out in full, six times. An `nvm install` that moves the default node silently breaks every Zed
+context server at once, with no fallback — see the PATH section below for why the shim could not be
+used instead.
+
+If the clients ever need to move independently, the fix is to stop sharing the global install —
+pin each to its own `npx -y @playwright/mcp@<version>`, accepting the extra process per launch.
 
 ## Why three servers and not one
 
@@ -182,6 +193,140 @@ as on 2026-08-12, now with three servers resident instead of one.
 Both browser servers run `--isolated`, which keeps the profile in RAM rather than on disk. That is
 the cheaper choice for disk and the *more* expensive one for memory. Worth revisiting if launches
 start failing.
+
+## Zed — where the prompt cost actually shows up
+
+Added 2026-08-14 to `~/.config/zed/settings.json`. The Zed in use is **the local fork build**, not a
+release: `~/.local/zed.app` reports `Zed dev 1.17.0 4155aed35978c5`, which is the HEAD of
+`prompt-fixes` in `~/code/zed` — the branch `zed-sampling.md` documents. So the settings schema
+below was read out of that source tree rather than from published docs, and is authoritative for
+this box only.
+
+### The measurement that decided the design
+
+**Zed sends full JSON tool schemas.** This is the whole story. qwen-code and Claude Code both
+*defer* MCP tools — the schemas stay out of the declaration list and only a truncated name +
+first-line description is advertised, which is why the README prices 24 Playwright tools at 632
+tokens. Zed has no such mechanism: every enabled tool's complete JSON schema goes into the request.
+
+Tool lists pulled from each live server over stdio JSON-RPC, serialised exactly as sent, and
+tokenized against the running llama-server's `/tokenize` — the same instrument the README uses:
+
+| server | tools | schema chars | **real tokens** |
+|---|---|---|---|
+| playwright | 35 | 25,942 | **6,454** |
+| chrome-devtools | 40 | 33,620 | **8,351** |
+| js-debugger | 21 | 11,586 | **2,821** |
+| **all three** | **96** | **71,148** | **17,626** |
+
+At 4.04 chars/token. Against the ~41.6k startup prompt this project exists to shrink:
+
+| | |
+|---|---|
+| share of the startup prompt | **~42%** |
+| prefill at the ~357 tok/s ceiling | **~49 s** |
+| vs. Playwright's cost in qwen-code | 632 tokens → **10× more per tool set** |
+
+For scale: removing computer use from qwen-code was worth 1,363 tokens and is recorded as a win.
+Enabling all three of these globally in Zed would cost **thirteen times** what that win saved. It
+would be the largest single prompt regression this project has measured.
+
+### So: profiles, not global enablement
+
+`default_profile` stays `minimal`, which costs nothing. The tools are paid for only on switching:
+
+| profile | servers | tokens | share |
+|---|---|---|---|
+| `minimal` (default) | none | 0 | — |
+| `browser` | playwright only | 6,454 | ~15% |
+| `browser-debug` | all three | 17,626 | ~42% |
+
+`browser` is the common case — drive, click, fill, snapshot, trace, video. `browser-debug` is for
+when runtime diagnosis or real breakpoints are actually needed. Splitting them is the difference
+between paying 15% and 42% on every turn of a session.
+
+### Trap 1 — PATH, and why the shim could not be used
+
+Zed's context servers are spawned via `command.envs(binary.env.unwrap_or_default())`
+(`crates/context_server/src/transport/stdio_transport.rs`), which *adds* to Zed's inherited
+environment rather than replacing it. So what matters is what Zed itself inherits.
+
+A desktop-launched Zed inherits the **systemd user environment**, and that PATH does not contain
+`~/.nvm/versions/node/v22.23.2/bin`. All three servers are `#!/usr/bin/env node` scripts, so this
+breaks twice over: the shim name does not resolve, and even an absolute path to the shim would fail
+because `node` is not on the PATH for the shebang to find.
+
+Confirmed, not assumed:
+
+```
+$ env -i HOME=/home/jstormes PATH="$SYSTEMD_USER_PATH" playwright-mcp --version
+env: 'playwright-mcp': No such file or directory
+```
+
+**Fix: invoke absolute `node` with the absolute script path**, removing PATH from the picture
+entirely. Verified by handshaking all three servers under `env -i` with only the systemd user PATH
+set — all three returned `serverInfo`.
+
+The cost of this fix is the nvm version pin described in the coupling section above. A PATH entry in
+`env` would have been the alternative; absolute paths were chosen because they also survive Zed
+being launched from a terminal that *has* sourced nvm, giving one behaviour instead of two.
+
+### Trap 2 — `minimal` gates context servers, and empty presets enable nothing
+
+Two separate gotchas, the second of which produces a config that looks right and does nothing.
+
+**First:** the shipped `minimal` profile sets `"enable_all_context_servers": false` (`write` sets it
+true; `ask` has the line commented out). Since `minimal` was already the default here, no MCP tool
+would ever have appeared regardless of how the servers were configured.
+
+**Second:** enablement is resolved **per tool name**, not per server
+(`crates/agent_settings/src/agent_profile.rs`):
+
+```rust
+pub fn is_context_server_tool_enabled(&self, server_id: &str, tool_name: &str) -> bool {
+    self.context_servers
+        .get(server_id)
+        .and_then(|preset| preset.tools.get(tool_name).copied())
+        .unwrap_or(self.enable_all_context_servers)
+}
+```
+
+So a preset of `"playwright": {}` alongside `enable_all_context_servers: false` misses on every
+lookup and falls through to `false` — **a Browser profile with zero browser tools**, silently. The
+first draft of this config had exactly that bug. The `browser` profile therefore lists all 35
+Playwright tool names explicitly as `true`; `browser-debug` takes the other route and sets
+`enable_all_context_servers: true`.
+
+### Config shape
+
+`context_servers` lives at the **top level** of `settings.json` — it is part of
+`ProjectSettingsContent`, which merges into user settings. `ContextServerSettingsContent` is an
+**untagged** enum, so the variant is chosen by which keys are present: `command` selects Stdio,
+`url` selects Http. Within Stdio, `ContextServerCommand` renames `path` to `command`, and takes
+`args`, `env`, and `timeout`.
+
+```json
+"context_servers": {
+  "playwright": {
+    "command": "/home/jstormes/.nvm/versions/node/v22.23.2/bin/node",
+    "args": ["…/@playwright/mcp/cli.js", "--isolated", "--headless",
+             "--browser", "chromium", "--caps", "devtools"]
+  }
+}
+```
+
+`chrome-devtools` additionally carries `CHROME_DEVTOOLS_MCP_NO_USAGE_STATISTICS=1` in `env` and
+`--no-performance-crux` in `args`, matching the Claude Code config.
+
+### What is verified, and what is not
+
+**Verified:** the file parses as JSONC; all three servers complete an MCP handshake under a
+simulated desktop PATH; the profile schema matches the fork's Rust structs; the token figures come
+from the real tokenizer.
+
+**Not verified:** no agent turn has actually been run in Zed against these tools. The 17,626 figure
+is the schema cost as sent, not an observed end-to-end prompt diff — Zed may add per-tool framing on
+top. Treat it as a floor.
 
 ## Decisions made, and why
 
@@ -275,9 +420,14 @@ sessions were live and either could have rewritten it from memory on exit.
 - **Chromium RSS under load on this box.** Carried over from 2026-08-12 and now more pressing —
   three idle servers hold 343 MB before any browser starts, against ~6 GB free.
 - **Prompt cost in Claude Code.** The qwen-code section prices its MCP tools in real tokens against
-  the local server's `/tokenize`. No equivalent figure is recorded here — Claude Code's deferred
-  tool mechanism differs, and no measurement was taken. The 96-tool count is *not* a token count
-  and should not be presented as one.
+  the local server's `/tokenize`, and the Zed section above now does the same. No equivalent figure
+  is recorded for Claude Code — its deferred tool mechanism differs from both, and no measurement
+  was taken. The 96-tool count is *not* a token count and should not be presented as one. Note the
+  Zed figure does **not** transfer: it is the full-schema cost, which is the thing deferral avoids.
+- **No agent turn has been run in Zed** against these tools. The 17,626-token figure is schema cost
+  as serialised, not an observed prompt diff — a floor, not a measurement of the real prompt.
+- **The nvm version is pinned into the Zed config** as a literal path, six times. Nothing warns if
+  `nvm install` moves the default node; every context server breaks at once.
 - ~~`--performanceCrux` is still on~~ — **closed 2026-08-14**, see Decisions.
 - **Whether the ~340 ms handshakes land on the launch critical path**, now ×3 servers.
 - **Sandbox.** Chrome launches with `--no-sandbox` — stock Playwright behaviour
