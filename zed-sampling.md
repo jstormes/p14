@@ -401,6 +401,77 @@ content and incremental compilation redoes only changed codegen units, not whole
 
 ---
 
+## The configuration this produced — applied 2026-08-14
+
+Everything above is fork work. This is what actually landed in
+`~/.config/zed/settings.json` as a result, and the two things about it that are not obvious.
+
+**All five agent profiles carry the same sampling block** — the three built-ins (`write`, `ask`,
+`minimal`) plus the two added for MCP (`browser`, `browser-debug`; see `browser-mcp.md`):
+
+```json
+"sampling": {
+  "temperature": 0.6,
+  "top_p": 0.95,
+  "top_k": 20,
+  "min_p": 0.0,
+  "presence_penalty": 0.0,
+  "repeat_penalty": 1.0
+}
+```
+
+These are the **thinking-mode precise-coding** figures from the
+[Qwen3.6-35B-A3B model card](https://huggingface.co/unsloth/Qwen3.6-35B-A3B-GGUF) — the same set
+`docs/src/ai/agent-profiles.md` uses as its sourced example after `4155aed359`. They match
+`default_model.enable_thinking: true`, which is what makes the thinking-mode row the right one.
+
+### The key is `repeat_penalty`, and that is section 5 biting again
+
+Model cards say `repetition_penalty`. `llama-server` accepts only `repeat_penalty` and silently
+ignores the other spelling — the field comment in `crates/llama_cpp/src/llama_cpp.rs` says so
+outright. Copying the card's key name verbatim into settings produces no penalty and no error.
+
+The neutral values are `presence_penalty: 0.0` and `repeat_penalty: 1.0`, so setting them changes
+nothing today. **They are pinned anyway, because unset fields fall through to
+`agent.model_parameters`.** That list is still `[]` here, so unset currently means "provider
+default" — but the card wants `presence_penalty: 1.5` for *non-thinking* mode, and the moment such
+an entry is added there, every profile without a pinned penalty silently inherits it. Pinning makes
+each profile closed rather than dependent on what `model_parameters` happens to hold.
+
+### Listing a built-in profile merges, it does not replace
+
+The three built-ins are listed with only `name` and `sampling` — no `tools`. That relies on
+`MergeFrom` for `IndexMap` walking the *incoming* map only
+(`crates/settings_content/src/merge_from.rs`), so an absent `tools` contributes nothing and the
+shipped tool list survives. If it replaced instead, `write` would silently lose all 23 of its tools.
+
+**This is not pinned by any test in the fork.** `unmodified_default_detection` sets a user profile
+but only asserts the modified flag, never the merged tool list. It was verified here by adding a
+temporary `gpui::test` asserting the real case — user settings with `sampling` and no `tools` —
+and running `cargo test -p agent_settings`:
+
+```
+test tmp_sampling_only_user_profile_preserves_builtin_tools ... ok
+```
+
+Built-in tools preserved, `temperature` resolved to `0.6`. The test was then reverted, so the tree
+is clean and **the gap is still there**. It is a small, obviously-correct regression test if this
+ever goes upstream.
+
+### Not covered by any of this
+
+Profile sampling applies to **agent threads only**. Inline assist, commit-message generation, and
+thread titles have no profile and read `agent.model_parameters` directly — still `[]`, so those
+three paths remain on provider defaults. Closing that means writing `model_parameters` entries, and
+per "The matching rule is wholesale" above, every entry has to repeat the shared values.
+
+Also unverified: no Zed request has been *observed* carrying these values. The chain was traced in
+source — `ProfileSamplingContent` → `SamplingParameters` → `LanguageModelRequest` → the llama.cpp
+wire struct — but the capture-proxy loop in "How to reproduce" is what would actually prove it, and
+it has not been re-run since the profiles were written.
+
+---
+
 ## Measured, in one place
 
 | thing | number |
@@ -453,6 +524,11 @@ end-to-end without touching the GUI. All six samplers came back matching what Ze
   or PR text. Notes are ready; a human has to write it.
 - **`frequency_penalty` works and is not wired up.** Verified honored by the server; nobody asked
   for it.
+- **The builtin-profile merge is untested in the fork.** Listing a built-in with only `sampling`
+  relies on `tools` merging rather than replacing. Verified once by a throwaway test that was
+  reverted; no permanent test pins it. See "Listing a built-in profile merges".
+- **The applied sampling has never been observed on the wire.** Traced through the source but not
+  captured. Re-running the proxy loop against a profile-driven request would close it.
 - **Zed-side `repetition_penalty` alias.** Moot locally now that our server accepts both, but
   anyone on a stock `llama-server` build still hits the silent drop. Worth deciding if this ever
   goes upstream.

@@ -318,6 +318,10 @@ Playwright tool names explicitly as `true`; `browser-debug` takes the other rout
 `chrome-devtools` additionally carries `CHROME_DEVTOOLS_MCP_NO_USAGE_STATISTICS=1` in `env` and
 `--no-performance-crux` in `args`, matching the Claude Code config.
 
+Both profiles added here also carry a `sampling` block, added 2026-08-14 alongside the three
+built-ins — see **"The configuration this produced"** in `zed-sampling.md` for the values, the
+`repeat_penalty` naming trap, and why listing a built-in profile merges rather than replaces.
+
 ### What is verified, and what is not
 
 **Verified:** the file parses as JSONC; all three servers complete an MCP handshake under a
