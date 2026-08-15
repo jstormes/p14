@@ -1,0 +1,82 @@
+[Unit]
+Description=llama.cpp server (FORK, disk prompt cache) - Qwen3.6-35B-A3B Q8_0 (Vulkan, gfx1150)
+Documentation=https://github.com/jstormes/llama.cpp
+# Test unit for the p14/disk-prompt-cache fork. Deliberately a byte-for-byte copy
+# of llama.service's flags plus the three --cache-disk-* flags and a different
+# binary, so any behaviour difference is the fork rather than the configuration.
+#
+# Binary: ~/code/llama.cpp-458/build/bin/llama-server (HEAD 6f355f044 on 7a57bedaa)
+# Reports "version: 10331 (52682e8d1)" and NOT 458 as disk-cache.md predicts. That
+# check is a false alarm: the worktree derives a different build number, and the
+# commit in the string is one behind HEAD (cached build-info) while the flags from
+# 6f355f044 are present. Branch point is confirmed by git log, not by the string.
+After=network-online.target
+Wants=network-online.target
+# Same session binding as llama.service: GPU access comes from the logind ACL on
+# the active seat, not group membership, so this must not start at boot.
+PartOf=graphical-session.target
+After=graphical-session.target
+# Both bind port 8080 and both want the whole GPU. Only one may run.
+Conflicts=llama.service
+
+[Service]
+# Replicates /opt/llama/strix-toolbox/vulkan/_run, which README.md measures as
+# worth ~8%: point the Vulkan loader at the bundled RADV (Mesa 26.3.0-devel +
+# libdrm 2.4.134) instead of system Mesa 26.0.3, which is the one genuinely slow
+# option. The driver directory is shared with the stock install unchanged.
+Environment=VK_ICD_FILENAMES=/opt/llama/strix-toolbox/vulkan/driver/radeon_icd.x86_64.json
+Environment=VK_DRIVER_FILES=/opt/llama/strix-toolbox/vulkan/driver/radeon_icd.x86_64.json
+# driver first, then the FORK's own libs -- not the stock vulkan/bin, or this
+# would load build-458 libggml against a fork binary.
+Environment=LD_LIBRARY_PATH=/opt/llama/strix-toolbox/vulkan/driver:%h/code/llama.cpp-458/build/bin
+# On by default in the build since fork commit 0b29b30, an ancestor of 7a57bedaa.
+# Exported anyway so this unit and the wrapper stay comparable line by line.
+Environment=GGML_VK_MMID_ROWLISTS=1 GGML_VK_MMID_SMALLN=1 GGML_VK_MMID_BM64=1
+Environment=GGML_VK_MMID_WAVE32=1 GGML_VK_MMID_F16B=1 GGML_VK_MMID_M128=1
+Environment=GGML_VK_FA_WAVE32=1
+WorkingDirectory=/opt/llama
+
+# At boot the user manager can start before amdgpu has published the render node.
+ExecStartPre=/bin/bash -c 'for i in $(seq 1 30); do [ -r /dev/dri/renderD128 ] && exit 0; sleep 1; done; echo "GPU render node not readable after 30s" >&2; exit 1'
+ExecStartPre=/usr/bin/mkdir -p %h/.local/state/llama-slots
+ExecStartPre=/usr/bin/mkdir -p %h/.local/state/llama-pcache
+
+ExecStart=%h/code/llama.cpp-458/build/bin/llama-server \
+  --host 127.0.0.1 --port 8080 \
+  -m /models/Qwen3.6-35B-A3B-Q8_0.gguf \
+  -a Qwen3.6-35B-A3B \
+  --mmproj /models/mmproj-BF16.gguf \
+  -ngl 999 --fit off --no-mmap \
+  --cache-ram 8192 \
+  --cache-disk-path %h/.local/state/llama-pcache \
+  --cache-disk-min-tokens 20000 \
+  --cache-disk-max-entries 4 \
+  --slot-save-path %h/.local/state/llama-slots/ \
+  --cache-type-k q8_0 --cache-type-v q8_0 \
+  -c 262144 -b 8192 -ub 1024 -np 1 -fa 1 -kvu \
+  --spec-type draft-mtp --spec-draft-n-max 2 \
+  --spec-draft-type-k q8_0 --spec-draft-type-v q8_0 \
+  --jinja --reasoning-budget 2048 \
+  --temp 1.0 --top-p 0.95 --top-k 20 --min-p 0.0 \
+  -dev Vulkan0
+
+# --cache-disk-min-tokens 20000 is a RECONSTRUCTION, not a recorded value. The
+# 2026-08-11 run was launched by hand and no script survived; its log
+# (~/.local/state/llama-test.log) persisted four ~41.6k-token prompts while
+# skipping requests of 829 and 15,653 tokens, so the threshold sat somewhere in
+# (15653, 41612]. 20000 reproduces that split and matches the flag's documented
+# purpose -- keep the startup prompt, skip background requests.
+#
+# --cache-disk-max-entries 4 is the default, restated. It is the ceiling that
+# disk-cache.md's "No ceiling" lesson added after v1 reached 10 GB in 13 minutes.
+# At ~900 MiB/entry the directory is bounded at roughly 3.5 GB.
+#
+# Slot save/restore is left unwired here as in llama.service, but note it is no
+# longer a no-op on this binary: 52682e8d1 persists prompt.checkpoints to a
+# <snapshot>.ckpt companion, which was the actual cause of the restore failure.
+
+Restart=on-failure
+RestartSec=10
+
+[Install]
+WantedBy=graphical-session.target

@@ -960,6 +960,7 @@ launch time as unchanged.
 |---|---|
 | `llama.service` | the final working unit — **the deliverable** |
 | `llama.service.as-found` | the unit as it was before this investigation, for diffing |
+| `llama-test.service` | test unit for the `p14/disk-prompt-cache` fork — deliberately a byte-for-byte copy of `llama.service`'s flags plus the three `--cache-disk-*` flags and the fork binary, so any difference is the fork and not the configuration. `Conflicts=llama.service`: both bind `127.0.0.1:8080` and both want the whole GPU. Note `--cache-disk-min-tokens 20000` is a **reconstruction**, not a recorded value — see the comment in the unit |
 | `bench-local.sh` | benchmark harness, same prompt shape as refhost's `bench-host.sh` |
 | `bench-results.tsv` | every measurement taken, all arms |
 | `set-dpm-high.sh` | reapplies the DPM setting after a reboot |
@@ -967,6 +968,7 @@ launch time as unchanged.
 | `llama-slot-restore.sh` | restores one — was a no-op, **fixed 2026-08-11** by persisting `prompt.checkpoints`; still not wired up, and no longer needed since `--cache-disk-path` covers this without any script |
 | `TODO.md` | open items |
 | `disk-cache.md` | source read of the prompt-cache code, the L2 disk-tier design, and the 2026-08-11 root cause + implementation |
+| `zed-sampling.md` | the 2026-08-14 Zed llama.cpp-provider work — per-profile sampling params, freezing the system prompt's date per thread (it was breaking the prompt cache once a day), the thinking toggle that did nothing on this provider, and `repetition_penalty` being silently dropped by llama-server. Builds on `disk-cache.md`; keeps the wrong turns, including three tests that lied |
 | `browser-mcp.md` | the 2026-08-14 Claude Code browser + JS-debug MCP stack — Playwright, chrome-devtools, mcp-debugger; the rev-1234/1237 mismatch this section got wrong; and the global-install coupling between the two clients |
 | `voice-asr.md` | local speech-to-text investigation — whisper.cpp + Qwen3-ASR, and why Qwen Code cannot yet use either |
 | `image-gen.md` | local text-to-image — stable-diffusion.cpp + Z-Image-Turbo, built and staged but blocked on memory |
