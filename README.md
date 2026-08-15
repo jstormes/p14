@@ -868,6 +868,28 @@ The replacement for what computer use was supposed to do. Browser automation via
 | browsers | `~/.cache/ms-playwright/` — `chromium-1234` (389 MB), `chromium_headless_shell-1234` (262 MB), `ffmpeg-1011` (4.9 MB); **656 MB total** |
 | unrelated | `/usr/bin/google-chrome` is the system browser and is *not* what this drives by default |
 
+> **Corrected 2026-08-14 — the browser claims in this section are wrong, and the config has since
+> changed.** Three specific errors, found while setting up the Claude Code stack:
+>
+> 1. **`--browser` defaults to the `chrome` *channel*, not bundled Chromium.** So the last row
+>    above is backwards: with `args: []` this drove **system Google Chrome**, confirmed from the
+>    live process tree (`/opt/google/chrome/chrome --headless ...`). The 656 MB of downloaded
+>    browsers was never touched.
+> 2. **Those browsers could not have been used anyway.** `chromium-1234` is the wrong revision —
+>    the `playwright-core` inside `@playwright/mcp@0.0.79` requires **1237**, and a direct launch
+>    fails with `Executable doesn't exist`. The mismatch was latent because of error 1.
+> 3. **The qwen config no longer matches line 862.** As observed 2026-08-14 it is
+>    `--browser chrome --executable-path /usr/bin/chromium-browser` — snap Chromium
+>    151.0.7922.108. Date of that change is unknown; it is not in git.
+>
+> The 1234 pair was **deleted** on 2026-08-14 and replaced with rev 1237 (Chrome for Testing
+> 152.0.7977.8). **qwen-code is unaffected** — its explicit `--executable-path` bypasses the
+> `ms-playwright` cache entirely.
+>
+> What *survives* unchanged is the reasoning below on why Playwright works where computer use did
+> not: CDP instead of AT-SPI holds regardless of which browser is driven. Only the "browser it
+> ships" clause is wrong. Full record in `browser-mcp.md`.
+
 **Why this works where computer use did not:** Playwright drives a browser it ships and controls
 over CDP. It never touches AT-SPI, never needs `toolkit-accessibility`, and does not care that this
 is a Wayland session or that Ubuntu 26.04 is off the vendor's verified list — all three of the
@@ -918,6 +940,12 @@ defaults to **headed** — `--headless` is opt-in, and `args: []` takes the defa
 load. If launches start failing or the model gets pushed out of GTT, add `--headless` (or
 `--isolated` to keep the profile in RAM rather than on disk) as the first thing to try.
 
+> **2026-08-14:** the `args: []` premise no longer holds — see the correction above; the browser
+> launched is snap Chromium via `--executable-path`, still headed. The memory warning itself is
+> unchanged and now larger: the Claude Code stack adds three more idle MCP servers totalling
+> **343 MB** against the same ~6 GB. Chromium-under-load is still unmeasured. Note also that
+> `--isolated` trades disk for **memory**, so it is the wrong lever if memory is what is short.
+
 Also unmeasured: whether the ~370 ms handshake lands on the launch critical path. qwen-code
 discovers MCP tools progressively — `client.ts` re-scans history in `setTools()` precisely because
 "progressive MCP discovery registers tools after a resumed chat has already been constructed" — so
@@ -939,12 +967,13 @@ launch time as unchanged.
 | `llama-slot-restore.sh` | restores one — was a no-op, **fixed 2026-08-11** by persisting `prompt.checkpoints`; still not wired up, and no longer needed since `--cache-disk-path` covers this without any script |
 | `TODO.md` | open items |
 | `disk-cache.md` | source read of the prompt-cache code, the L2 disk-tier design, and the 2026-08-11 root cause + implementation |
+| `browser-mcp.md` | the 2026-08-14 Claude Code browser + JS-debug MCP stack — Playwright, chrome-devtools, mcp-debugger; the rev-1234/1237 mismatch this section got wrong; and the global-install coupling between the two clients |
+| `voice-asr.md` | local speech-to-text investigation — whisper.cpp + Qwen3-ASR, and why Qwen Code cannot yet use either |
+| `image-gen.md` | local text-to-image — stable-diffusion.cpp + Z-Image-Turbo, built and staged but blocked on memory |
 
 **Removed 2026-08-07:** `llama-warmup.sh` and `llama-warmup.service`. They worked (97 s → 7–9 s
 on a session's first turn) but only in the directory they warmed, and the in-session RAM cache
 covers everything else for free. See "The warm-up — built, measured, and removed".
-| `voice-asr.md` | local speech-to-text investigation — whisper.cpp + Qwen3-ASR, and why Qwen Code cannot yet use either |
-| `image-gen.md` | local text-to-image — stable-diffusion.cpp + Z-Image-Turbo, built and staged but blocked on memory |
 
 Install the unit with:
 
