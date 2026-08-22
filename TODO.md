@@ -1,6 +1,43 @@
 # p14 — open items
 
-## 2. DPM `high` is manual, and the GUI cannot reach it
+> **2026-08-22 — the mainboard was replaced.** The original p14 board died; this is a new
+> board, new power subsystem, newer BIOS, and the P16s' DIMMs. Item 2 is closed by that swap,
+> items 8 and 9 are largely defused by the RAM going 60 → 88 GB, and items **10** and **11**
+> are new. Item 11 is the one that wants action while the repair is recent. Background:
+> `README.md` → "The 2026-08-22 re-measurement".
+>
+> | # | state |
+> |---|---|
+> | 2 | ✅ closed — DPM `high` is no longer a lever; stop running `set-dpm-high.sh` |
+> | 3, 4, 5, 6, 7 | unchanged |
+> | 8, 9 | memory worries largely defused by the RAM upgrade |
+> | 10 | ⏳ new — `amdgpu.gttsize` still sized for the 60 GB box |
+> | 11 | ⏳ new — the board is 23% short; not thermal, not power — a memory stall |
+
+
+## 2. ~~DPM `high` is manual, and the GUI cannot reach it~~ — closed 2026-08-22, stop doing this
+
+> **The mainboard was replaced and this item is obsolete. Do not run `set-dpm-high.sh` as a
+> matter of course.** On the replacement board, measured over 4 interleaved rounds
+> (`dpm-results.tsv`):
+>
+> | arm | PP | TG | W | °C |
+> |---|---|---|---|---|
+> | `auto` (as found) | 350.2 | **19.67** | **24.0** | **67.3** |
+> | `high` | **374.9** | 17.81 | 46.7 | 84.7 |
+>
+> **+7.0% prefill, −9.5% generation, +94% power, +17 °C.** For interactive coding that is a
+> net loss: generation is what you sit and watch, and prefill is mostly cache hits. Run it
+> only for a long batch prefill where 7% of PP is worth 22 W, and not otherwise.
+>
+> The "resets to `auto` on boot" fragility that this item existed to manage is therefore no
+> longer a problem to solve — the boot default is now the setting you want. The decision
+> below ("not persisted") stands, for a better reason than the one it was made for.
+>
+> See `README.md` → "The 2026-08-22 re-measurement" for why ~70% became ~7%: most likely the
+> original ~1150 MHz / 13 W behaviour was a failing power subsystem, not a driver default.
+
+*Original text, for the board that died:*
 
 `power_dpm_force_performance_level` is a runtime sysfs write and resets to `auto` on boot,
 taking ~70% of the recovered throughput with it. Reapply with `sudo ~/p14/set-dpm-high.sh`.
@@ -68,6 +105,14 @@ Settings when throughput matters.
 Caveat carried over to item 2: that same switch does **not** set GPU DPM, which is the
 bigger half. And the benchmark moved DPM and governor together, so the ~10% is not cleanly
 attributed to the governor alone.
+
+> **Reopened and re-closed 2026-08-21 — the governor is worth ~0%, not ~10%.** A 2×2 of
+> DPM × governor on the P16s (5 interleaved rounds, `p16s.md`) separates them for the first
+> time: at fixed DPM, `performance` is **+1.7% at `auto` and −1.3% at `high`**, and at `high`
+> it clocks the GPU *lower* (2816 vs 2899 MHz) and runs 6 °C hotter — a shared SoC power
+> budget, so a busier CPU costs the GPU. The whole 429 → 483 was DPM plus rep-order.
+> **Revised advice: leave the governor alone; Power Mode → Performance is not a throughput
+> lever.** Not re-measured on p14 itself, but the mechanism is not chassis-specific.
 
 ---
 
@@ -275,7 +320,16 @@ Setup and the prompt-cost measurement are in `README.md` → "Client ops — 202
 **632 tokens** of startup prompt against computer use's 1,363, and it works on this box where
 computer use could not. Two loose ends, both cheap to close:
 
-1. **Headed Chromium against ~6 GB free.** `playwright-mcp` is **headed by default** and
+1. **Headed Chromium against ~6 GB free.**
+
+   > **Largely defused 2026-08-22 by the RAM upgrade.** This was written when the box had
+   > 60 GB and sat at 54/60 with the model resident. It now has **88 GB**, and with the model
+   > up it sits at ~46 GB used with **~37 GB available**. A headed Chromium no longer competes
+   > for the last 6 GB of anything. The GTT side is unchanged and is now the tighter
+   > constraint (35.8 of 49.1 GiB used — see item 10), but Chromium does not live in GTT.
+   > **Downgraded from "measure before assuming" to "just use it."**
+
+   `playwright-mcp` is **headed by default** and
    `args: []` takes that default, so the first `browser_navigate` launches a full visible
    Chromium on a box sitting at 54/60 GB with the model resident — the same wall that blocked
    `image-gen.md`. Not yet tried under load. If it fails or pushes the model out of GTT, add
@@ -290,3 +344,168 @@ computer use could not. Two loose ends, both cheap to close:
    roughly the same moment.
 
 Both are launch-time/memory questions, not correctness ones. Nothing is broken today.
+
+---
+
+## 9. ⏳ Open 2026-08-16 — the Agent Debug Browser is built, but never driven by an agent
+
+All three clients (qwen-code, Claude Code, Zed) now attach over CDP to one visible Chrome for
+Testing on `:9222`, started from a desktop icon. Setup, both traps and the sandbox verification are
+in `browser-mcp.md` → "Shared visible browser". The capability eval that motivated it is
+`browser-eval.md`.
+
+Working and verified: both MCP servers attach to the same instance, the bare-ref rule holds over
+CDP, and the sandbox is genuinely on (`chrome-for-testing` label, renderer in a different user
+namespace from the browser).
+
+Loose ends, in the order they are likely to bite:
+
+1. **No agent turn has been run against it.** Every check was made with a direct MCP client, not
+   through an actual client driving a task. This is the same gap the Zed section had, reopened one
+   layer up. Cheapest close: one real qwen-code turn that navigates and clicks something.
+
+2. **Memory under load — now the sharpest version of §8's loose end #1.** *(Also defused
+   2026-08-22: 88 GB installed, ~37 GB available with the model resident. Still the oldest
+   unmeasured thing in the project, but no longer the risk it was written as.)* That item worried about a
+   headed Chromium against ~6 GB free. This makes it *worse on purpose*: the browser is headed, has
+   a persistent on-disk profile rather than `--isolated`, and stays resident between agent turns
+   instead of being torn down. It replaces three potential `--isolated` headless browsers with one
+   long-lived headed one, so the direction of the change is not obvious — measure RSS during a real
+   browse before assuming either way. **Still the oldest unmeasured thing in this project.**
+
+3. **Concurrent agents sharing one browser is untested.** `-np 1` on llama-server serialises the
+   model, so two agents interleaving tabs has not come up. Nothing prevents it, and nothing
+   allocates tabs between clients.
+
+4. **The port is hard-coded in three client configs.** `AGENT_BROWSER_PORT` moves the browser but
+   not the clients. Fine until it isn't; a shared source would mean generating the configs.
+
+5. **GNOME rendering the desktop icon was never observed.** It validates and is marked trusted.
+
+Not planned: auto-start via a systemd user service. It would need `graphical-session.target`
+binding like `llama.service`, and a debug browser that appears without being asked for is its own
+annoyance. Revisit if "browser wasn't running" becomes a recurring failure.
+
+---
+
+## 10. ⏳ Open 2026-08-22 — `amdgpu.gttsize` is still sized for the 60 GB box
+
+The kernel command line carries:
+
+```
+amdgpu.gttsize=49152 ttm.pages_limit=12582912 ttm.page_pool_size=12582912
+```
+
+49152 MiB of GTT, and `12582912` pages × 4 KiB = the same 48 GiB. That was an aggressive
+number when the machine had 60 GB of usable RAM — it claimed 80% of it. On 88 GB it is
+merely 55%, and it is now **the binding limit rather than RAM**:
+
+| | |
+|---|---|
+| GTT used, model resident at `-c 262144` | **35769 MiB** |
+| GTT total | 49152 MiB |
+| headroom | ~13 GiB |
+| RAM still free for everything else | ~37 GiB available |
+
+So there is ~30 GB of RAM that the GPU is structurally unable to reach. Raising both values
+together is the lever for a larger context, a larger model, or a second resident model — but
+**neither has been tested at a higher value on this board**, and both are boot-time, so a bad
+value costs a reboot. Raise `gttsize` and `ttm.pages_limit` in step; setting only one has no
+effect.
+
+Related: this is what makes item 8's and item 9's memory worries much less sharp than when
+they were written — see the note added to both.
+
+---
+
+## 11. ⏳ Open 2026-08-22 — the replacement mainboard runs 23% short, and it looks like a memory stall
+
+The board swap left the machine **better untuned and worse tuned**: as-found prefill
+232 → 350 t/s, best-case prefill 483 → 375. Against the P16s — *same fork server, same flags,
+and literally the same DIMMs* — it is **−23% PP and −18% TG at an identical 2900 MHz**.
+
+### The measurement that decides it
+
+`gov-powersave`, steady state, round 1 dropped. `p16s-bench-results.tsv` vs `dpm-results.tsv`:
+
+| | metric | P16s | new p14 | delta |
+|---|---|---|---|---|
+| **`auto`** | PP | 429.7 | 350.2 | **−18.5%** |
+| | sclk | 1971 MHz | **2169 MHz** | **+10.0%** |
+| | power | 24.0 W | 24.0 W | **0.0%** |
+| | temp | 71.5 °C | 67.3 °C | −4.2 °C |
+| **`high`** | PP | 487.7 | 374.9 | **−23.1%** |
+| | sclk | 2899 MHz | 2900 MHz | 0.0% |
+| | power | 54.8 W | 46.7 W | −14.8% |
+| | temp | 91.5 °C | 84.7 °C | −6.8 °C |
+| | **PP per MHz** | 0.2180 / 0.1682 | 0.1614 / 0.1293 | **−25.9% / −23.2%** |
+
+**At `auto`: same power, 10% higher clock, 4 °C cooler, 18.5% slower.** No thermal or
+power-headroom argument survives that. Throughput-per-clock is down ~23–26% in *both* arms —
+invariant to power state, which is not how a thermal limit behaves. The lower power at `high`
+is a symptom: a GPU at 100% busy and the same clock drawing 15% less power is stalling, not
+being throttled.
+
+> **Earlier reading, now retracted:** this item first concluded "thermal — probably heatsink
+> seating from the swap", from the `dpm-high` power/temp rows alone. The `auto` row kills it.
+> Do not re-derive the thermal story from §2's table without reading §3.
+
+**What has been ruled out** (`dpm-results.tsv` + `prof-results.tsv`):
+
+| suspect | verdict |
+|---|---|
+| `platform_profile` / cTDP | **No.** `balanced` 375.2 vs `performance` 373.8, −0.4% |
+| thermal limiting | **No.** Deficit is identical at 24 W / 67 °C as at 47 W / 85 °C |
+| power cap | **No.** Same deficit at matched 24.0 W |
+| GPU DPM level | **No.** `high` is +7% PP and −9.5% TG; at max clock either way |
+| CPU governor | **No.** Closed 2026-08-21 on the P16s, ~0% |
+| wrong GPU / downbinned part | **No.** `0x150e` rev `0xd1`, 32 SIMDs = 16 CU, 2900 MHz max |
+| a GPU clock domain stuck low | **No.** `sclk` 2900, `mclk` 2800, `fclk` 1960, `socclk` 1472 — all at max under load |
+| llama.cpp build / Mesa version | **No.** Settled 2026-08-07, unchanged across the swap |
+| the server being a different one | **No.** Both datasets are `llama-test.service`; `llama.service` never started on 2026-08-21 (journal-verified) |
+
+**What is left: the memory path.** TG down 13–18% points the same way — generation is
+bandwidth-bound. The DIMMs are the same physical parts, so the suspicion is how the
+*replacement board* is driving them: training after the move, channel interleave, or
+fabric/`uclk` ratios.
+
+**The signature has been seen before, on known-good hardware.** `lemonade-deb-interleaved.tsv`
+— the P16s, same day, same llama.cpp server — records **360–385 PP at 2900 MHz, 43–47 W,
+76 °C**: cooler *and* slower *and* lower-power than the 480 the same box gave in
+`p16s-bench-results.tsv`. That happened when lemonade's servers were in the rotation competing
+for memory. **The replacement p14 board reproduces it with nothing else resident** (`lemond`
+holds no model, 24 MB RSS; GTT 35.8 GiB is llama-server alone). The mechanism is real and
+observed; the open question is what is playing the part of the competing process here.
+
+⚠ **Compare matched protocols only.** The P16s ranged 488 → 297 across 2026-08-21 depending on
+rotation and thermal state. 487.7 is its clean single-server DPM number, which is what the
+table above compares against.
+
+### → Pick up here
+
+1. **The evidence gap: `mclk`/`fclk`/`socclk` were never sampled on the P16s.** They look
+   correct here in isolation but have nothing to compare against. **Extend `bench-dpm.sh` and
+   `bench-prof.sh` to sample all four clock domains, not just `sclk`** — that is the single
+   highest-value change to the harness, and it should have been there from the start.
+2. **Re-seat the DIMMs and re-run `bench-dpm.sh`.** Cheapest possible test of a bad memory
+   train after the move, and it costs one reboot.
+3. **Check channel interleave is actually active.** `dmidecode -t 17` shows both `P0 CHANNEL A`
+   and `P0 CHANNEL B` populated with matched dual-rank parts, which *should* interleave, but
+   nothing has confirmed the board is doing it.
+4. **Check the VRAM carve-out.** It is 8 GB here (`mem_info_vram_total` 8192 MiB) against an
+   inferred 4 GB on the old board; the P16s value was never recorded. It changes where the
+   model's weights sit relative to GTT.
+5. **Run a pure memory-bandwidth microbenchmark** rather than inferring from llama.cpp — a
+   direct number would separate "the board drives this RAM slower" from "something in the
+   GPU memory path". Nothing here does that today.
+6. **Find what is competing.** The signature matches the P16s-under-contention case, so look
+   for a bandwidth consumer that should not be there: the iGPU serving the desktop while the
+   model runs, a compositor or browser doing continuous GPU work, or the 8 GB VRAM carve-out
+   (against an inferred 4 GB on the old board) changing where weights sit. **A run from a bare
+   TTY with the graphical session stopped would isolate the first two cheaply** — and note that
+   every measurement in `dpm-results.tsv` and `prof-results.tsv` was taken with a full desktop,
+   a browser and an agent session running.
+7. **Fallback:** if the memory path checks out, the deficit is in the board's silicon or power
+   tables and the honest conclusion is that the replacement is simply a slower machine than
+   the one it replaced. Say so in `README.md` rather than leaving it open — and it is a
+   warranty conversation.

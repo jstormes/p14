@@ -25,15 +25,245 @@ Start with [`TODO.md`](TODO.md) for current state and open items, and
 
 ## The host
 
+> ## ⚠ 2026-08-22 — this is not the same p14. Read this before trusting any number below.
+>
+> **The original p14 died and its mainboard was replaced.** What carries the name "p14"
+> today is a **new mainboard and a new power subsystem**, a newer BIOS, and the P16s'
+> physical DIMMs moved across. The only things shared with the machine this document was
+> written about are the chassis, the model, and the software stack.
+>
+> **Everything measured before 2026-08-22 was measured on hardware that no longer exists,
+> and which we now know was on its way to failing.** Treat the numbers in the next three
+> sections as history, not as configuration guidance.
+>
+> The headline consequence: **GPU DPM `high` — this document's single biggest lever, "worth
+> ~70%" — is worth ~7% on the new board, and costs more than it buys.** Untuned prefill is
+> **350 t/s** against the 232 this file was written against; forcing `high` takes it to 375
+> but loses **9.5% of generation** for +94% power and +17 °C. Stop running
+> `set-dpm-high.sh`. There is a good case that the original presenting problem was a hardware
+> fault rather than a misconfiguration; see **"The 2026-08-22 re-measurement"** below.
+>
+> The P16s comparison is preserved in **`p16s.md`**, and is now cleaner than it was: the
+> DIMMs in this machine are literally the ones that were in the P16s. It is also where the
+> second finding comes from: **the replacement board is 23% slower than the P16s at an
+> identical clock, at identical power, on identical RAM.** It is not thermally limited and not
+> power-capped — at DPM `auto` it draws the same 24 W, clocks 10% *higher*, runs cooler, and
+> still loses 18.5%. That is a memory stall, and it is worth chasing while the repair is
+> recent. See TODO item 11.
+
 Investigation date: **2026-08-06** (ongoing)
-Host: p14 (ThinkPad P14s, Ryzen AI 9 HX PRO 370 / Radeon 890M, gfx1150, 60 GB, GTT 49152 MiB)
+Last re-measured: **2026-08-22**
+
+| | |
+|---|---|
+| Host | p14 — ThinkPad **P14s Gen 6 AMD** (`21RV000NUS`) |
+| Mainboard | **replaced 2026-08 — new board and new power subsystem.** The original died |
+| SoC | Ryzen AI 9 HX PRO 370 / Radeon 890M, gfx1150 *(new silicon instance, same part)* |
+| RAM | **96 GB — 2× 48 GB Samsung `M425R6GA3PB0-CWMOD`, DDR5-5600 SODIMM, dual-rank, one per channel.** These are the **P16s' DIMMs, physically moved over**. 88 GB (83 GiB) visible to the OS after an 8 GB VRAM carve-out |
+| GTT | 49152 MiB, from `amdgpu.gttsize=49152` + `ttm.pages_limit=12582912` on the kernel command line — **sized for the old 60 GB box and now the binding limit**, see TODO item 10 |
+| BIOS | **R2XET40W (1.20)**, 2026-05-26 *(was R2XET39W 1.19)* |
+| OS | Ubuntu 26.04 LTS, kernel 7.0.0-30-generic |
+
 Model: Qwen3.6-35B-A3B Q8_0 + mmproj-BF16, served by `llama.service` (user unit) on
 `127.0.0.1:8080`
+
+> **The RAM question in `p16s.md` is settled, and settled harder than expected.** That file
+> warned that p14's memory *type* was never recorded — only "60 GB" — and that if p14 were
+> soldered LPDDR5x-7500 (~120 GB/s), the P16s would have had *less* bandwidth, skewing the
+> comparison. It is moot: the DIMMs were **moved from the P16s into this machine**, so the
+> two boxes now share not merely a bandwidth class but the same physical parts —
+> `dmidecode -t 17` reports `Form Factor: SODIMM`, DDR5-5600, dual-rank, on both channels.
+> p14 has SODIMM slots and is therefore not soldered. **Drop the bandwidth asterisk.**
 
 Reference documentation lives on **refhost** — a separate machine on the local network that holds
 the install guide and the baseline benchmark data this work is measured against. Referred to by
 placeholder throughout; paths are `refhost:~/p14s-setup/P14S-NATIVE-INSTALL.md` and
 `refhost:~/p14s-setup/toolbox-raw/*.tsv`.
+
+---
+
+## The 2026-08-22 re-measurement
+
+The mainboard swap makes every earlier number a measurement of hardware that no longer
+exists. This section is what the machine actually does now.
+
+**Protocol.** `bench-dpm.sh`, the same 18k-token nonce-prefixed cold prompt as
+`bench-local.sh`, **4 fully interleaved rounds** of DPM `auto` / DPM `high`, one server
+process throughout, GPU telemetry sampled at 1 Hz. Round 1 dropped per the rep-order rule.
+CPU governor left at `powersave` — closed 2026-08-21 as worth ~0%. Raw data:
+`dpm-results.tsv`.
+
+Server is `llama-test.service` (the `p14/disk-prompt-cache` fork). **This is the same server
+the P16s numbers were taken against** — `llama.service` never started on 2026-08-21, verified
+in the journal — so `p16s-bench-results.tsv` and `dpm-results.tsv` are directly comparable.
+
+### Result — steady state, rounds 2–4, n=3
+
+| arm | PP | TG | sclk | W | °C |
+|---|---|---|---|---|---|
+| `dpm-auto` (as found) | 350.2 | **19.67** | 2247 | **24.0** | **67.3** |
+| `dpm-high` | **374.9** | 17.81 | 2900 | 46.7 | 84.7 |
+
+**DPM `high` is +7.0% on prefill, −9.5% on generation, for +94% power and +17 °C.**
+
+### 1. The ~70% DPM lever is gone, and it was probably never a tuning win
+
+This document's central claim is that `power_dpm_force_performance_level=auto` left the GPU
+"at **~1150 MHz drawing 13 W**" under 100% load, and that forcing `high` recovered ~70%. On
+this board `auto` does what `auto` is supposed to do: it ramps to 2137–2480 MHz at 24–28 W
+under load, and prefill runs at 350–372 t/s without anyone touching sysfs.
+
+That is now **two healthy machines against one sick one**:
+
+| board | DPM `auto` under load | PP at `auto` |
+|---|---|---|
+| original p14 mainboard (since died) | **~1150 MHz, 13 W** | 232 |
+| P16s, 2026-08-21 | ~2000–2500 MHz, 24–32 W | 436 |
+| replacement p14 mainboard, 2026-08-22 | 2137–2480 MHz, 24–28 W | 350–372 |
+
+> **Hypothesis, clearly labelled as one: the presenting problem was a failing power
+> subsystem, not a misconfiguration.** A GPU that will not leave ~1150 MHz / 13 W under
+> sustained 100% load, on a board that later died outright, looks much more like early
+> hardware failure than like a driver default. Every board we have measured that was *not*
+> about to fail ramps on its own. On that reading, `set-dpm-high.sh` was a workaround that
+> forced a sick VRM to deliver power it would not deliver voluntarily — which is exactly why
+> it was worth ~70% then and ~7% now.
+>
+> This cannot be proven: the evidence died with the board. But it is the reading most
+> consistent with what three boards have done, and it should be the default assumption until
+> something contradicts it.
+
+**Operationally: stop running `set-dpm-high.sh`.** On this board it buys 7% of prefill and
+costs 9.5% of generation, 22 W and 17 °C. For interactive coding — where generation is what
+you watch and prefill is mostly cache hits — it is a net loss. See TODO item 2.
+
+### 2. The new board is ~23% slower at the top end than the P16s
+
+Same fork, same flags, same model, and *the same physical DIMMs*:
+
+| | P16s (2026-08-21) | new p14 board (2026-08-22) | delta |
+|---|---|---|---|
+| PP at `dpm-high` | **487.7** | 374.9 | **−23%** |
+| TG at `dpm-high` | **21.68** | 17.81 | **−18%** |
+| sclk | 2899 MHz | 2900 MHz | — |
+| power | **55 W** | 46.7 W | **−8 W** |
+| temp | 91.5 °C | 84.7 °C | −7 °C |
+
+Identical clock, identical RAM, ~8 W less power, 23% less throughput.
+
+> ⚠ **The power and temperature rows above understate the heat**, and the power row is not
+> the cause of anything. They come from the interleaved DPM run, where the `high` arm cooled
+> during every `auto` arm; sustained, the board reaches 49 W and 94–95 °C. More importantly,
+> §3 shows the lower power is a *symptom* of stalling rather than a limit being imposed.
+
+So the honest summary of the swap is: **much better untuned, meaningfully worse tuned.**
+As-found prefill went 232 → 350 (+51%); best-case prefill went 483 → 375 (−22%).
+
+### 3. It is memory-stalled — not power-capped, and not thermally limited
+
+The obvious first suspect was a lower power ceiling — a cTDP change in the new BIOS, which
+`platform_profile` would expose. **It is not that.** `bench-prof.sh`, 3 interleaved rounds at
+fixed `dpm-high`, profile switched via `powerprofilesctl` (raw sysfs writes lose to
+`power-profiles-daemon`); raw data `prof-results.tsv`:
+
+| arm | PP | TG | W | °C |
+|---|---|---|---|---|
+| `balanced` | 375.2 | 17.60 | 49.0 | 92.0 |
+| `performance` | 373.8 | 17.30 | 49.5 | 93.5 |
+
+**−0.4%.** The "Ruled out" verdict on `platform_profile` survives the board swap, now for a
+measured reason on this board rather than an inherited one.
+
+**Nor is it heat.** Put the two boards side by side at matched settings and the thermal
+explanation collapses:
+
+| | metric | P16s | new p14 board | delta |
+|---|---|---|---|---|
+| **`auto`** | PP | 429.7 | 350.2 | **−18.5%** |
+| | sclk | 1971 MHz | **2169 MHz** | **+10.0%** |
+| | power | 24.0 W | 24.0 W | **0.0%** |
+| | temp | 71.5 °C | 67.3 °C | −4.2 °C |
+| **`high`** | PP | 487.7 | 374.9 | **−23.1%** |
+| | sclk | 2899 MHz | 2900 MHz | 0.0% |
+| | power | 54.8 W | 46.7 W | −14.8% |
+| | temp | 91.5 °C | 84.7 °C | −6.8 °C |
+| | **PP per MHz** | 0.2180 / 0.1682 | 0.1614 / 0.1293 | **−25.9% / −23.2%** |
+
+**At `auto` the p14 draws identical power, clocks 10% higher, runs 4 °C cooler, and is still
+18.5% slower.** No thermal or power-headroom argument survives that row. And
+throughput-per-clock is down ~23–26% in *both* arms — the deficit is invariant to power state,
+which is not how a thermal limit behaves.
+
+The lower power at `high` is a **symptom, not a cause**. On a GPU pinned at 100% busy and the
+same clock as its comparator, drawing 15% less power means fewer cycles are doing real work.
+That is stalling, not throttling.
+
+> **The board is memory-stalled.** TG down 13–18% points the same way — generation is
+> bandwidth-bound, and it falls with prefill. The suspicion is the memory path after the DIMM
+> move: training, channel interleave, or fabric/`uclk` ratios on the replacement board.
+>
+> **The evidence gap is that `mclk`/`fclk`/`socclk` were never sampled on the P16s.** On this
+> board they sit pinned at maximum under load (`mclk` 2800, `fclk` 1960, `socclk` 1472), which
+> looks correct in isolation but has nothing to be compared against. Any harness that touches
+> this again should sample all four clock domains, not just `sclk`.
+
+Heat is still real and worth knowing about — held at `dpm-high` back-to-back rather than
+alternating with `auto`, the board climbs to 94–95 °C and prefill decays with it:
+
+| round | PP | W | °C |
+|---|---|---|---|
+| 1 | 379.1 | 45.0 | 80.0 |
+| 2 | 376.6 | 49.0 | 90.0 |
+| 3 | 373.7 | 49.1 | **94.0** |
+
+That is a ~1.4% decay across three rounds in a 14" chassis, and it is why the `dpm-high`
+power/temp figures in §2 read cooler than the machine actually runs. **It is not the 23%.**
+
+### 4. The P16s produced this same signature — when something was competing for memory
+
+The 2026-08-21 session left three other datasets, all the same box and the same llama.cpp
+server on the same day. They disagree wildly, and the disagreement is the most useful thing
+in this whole section:
+
+| dataset | rotation | PP | sclk | W | °C |
+|---|---|---|---|---|---|
+| `p16s-bench-results.tsv` | 2 arms, DPM only, nothing else resident | **480–492** | 2900 | **54–58** | 88–93 |
+| `lemonade-deb-interleaved.tsv` | 3 arms, rotated against lemonade servers | **360–385** | 2900 | **43–47** | 76–92 |
+| `results.tsv` | 6 arms, all heavy, box saturated | 488 → **297** | 2900→2711 | 56→44 | 86→99 |
+
+Read the middle row carefully. **At an identical 2900 MHz, the P16s produced 360 t/s while
+drawing 43 W at 76 °C** — cooler *and* slower *and* lower-power than the run that gave it 480.
+That is the same signature the replacement p14 board shows today (375 t/s, 2900 MHz, 45–47 W),
+and on the P16s it appeared exactly when another model server was in the rotation competing
+for memory.
+
+> **This is independent corroboration of the memory-stall reading, not a refutation of it.**
+> The mechanism has now been observed on known-good hardware, with a known cause: contention
+> for memory bandwidth depresses throughput and power together while the clock stays pinned.
+> The replacement p14 board reproduces that signature **with nothing else resident** — `lemond`
+> holds no model (24 MB RSS), GTT shows 35.8 GiB, which is llama-server alone.
+
+Two consequences for how this file should be read:
+
+1. **487.7 is the P16s' clean-protocol number, not a universal one.** The same box ranged
+   488 → 297 across the day. Only compare matched protocols — which §2 and §3 do
+   (`bench-p16.sh` vs `bench-dpm.sh`, both single-server DPM rotations).
+2. **The third row is a thermal collapse and looks nothing like the p14.** Saturated at
+   98–99 °C the P16s lost a third of its prefill and its clock sagged to 2711 MHz. The p14
+   under sustained load holds 2900 MHz and decays 1.4%. **The 16" chassis has the higher peak
+   and the worse collapse; the p14 is flat but capped.** Whatever is wrong with it is not
+   heat, and this is the clearest demonstration of that.
+
+> ⚠ **One protocol asymmetry, stated because it cuts against the conclusion.** `bench-p16.sh`
+> ran 4 arms per round, so its `high` runs got two cooling runs between them; `bench-dpm.sh`
+> drops the governor arm, so the p14's `high` runs got one. The p14 therefore had *less*
+> recovery time. It does not rescue the gap: the p14's very first `high` run, from cold at
+> 80–81 °C, measured **378–379** against the P16s' 480 at 88 °C. Cold, hot, sustained or
+> interleaved, this board sits at ~375.
+
+Ruled out already: GPU identity (`0x150e` rev `0xd1`, 32 SIMDs = 16 CU, 2900 MHz max —
+correct part), `platform_profile`, DPM level, CPU governor, llama.cpp build, Mesa version,
+the server being a different one, and a second resident model. See TODO item 11.
 
 ---
 
@@ -95,9 +325,16 @@ Attribution:
 
 ---
 
-## The two things that actually mattered
+## The two things that actually mattered *(on the board that died)*
 
-### 1. GPU DPM level — worth ~70%
+> **Both of these are history as of 2026-08-22.** §1 below is worth ~7%, not ~70%, on the
+> replacement mainboard, and costs 9.5% of generation to get it — see "The 2026-08-22
+> re-measurement". §2 still holds: the driver the server runs against is still the driver
+> the server runs against. Kept in full because the *reasoning* is what explains the shape of
+> `llama.service`, and because §1 is the best surviving evidence for the failing-hardware
+> reading.
+
+### 1. GPU DPM level — worth ~70% ~~on this box~~ *on the original mainboard only*
 
 As found, `power_dpm_force_performance_level` was `auto`. Under 100% GPU load the card sat
 at **~1150 MHz drawing 13 W**, against the 2900 MHz / 58–62 W the baseline recorded. The
@@ -114,6 +351,13 @@ echo high | sudo tee /sys/class/drm/card1/device/power_dpm_force_performance_lev
 > session (GPU access comes from the logind ACL, not group membership).
 >
 > **If throughput ever looks halved again, check this value first.**
+
+> **Revised 2026-08-22.** None of the paragraph above is actionable on the current board.
+> `auto` ramps by itself; `high` buys 7% of prefill and loses 9.5% of generation. The
+> fragility that made this "the single most fragile part of this setup" is gone with the
+> board it belonged to — and if throughput ever *does* look halved again, the first thing to
+> check is no longer this sysfs value but **whether the hardware is failing**, because that
+> is what halved it last time.
 
 Note that `high` also pins the clock at 2900 MHz *at idle*, so idle GPU power is higher
 than with `auto`. On battery that is a real cost.
@@ -148,9 +392,9 @@ tr '\0' '\n' < /proc/$(systemctl --user show -p MainPID --value llama.service)/e
 | hypothesis | result |
 |---|---|
 | **llama.cpp build version** | 319/54d76da (the baseline's build) gives 425–447 vs 425–433 for the current 458/7a57bed. Within noise at n=4. v0.2 is installed alongside at `/opt/llama/strix-toolbox-v0.2` if you want to re-run it. |
-| **AC vs battery** | Identical. On AC: 392–409 PP at 49–58 W / 68–89 °C, matching the baseline's 58–62 W / 87–93 °C envelope. |
+| **AC vs battery** | Identical. On AC: 392–409 PP at 49–58 W / 68–89 °C, matching the baseline's 58–62 W / 87–93 °C envelope. *(Original board. The replacement never exceeds ~47 W, so this envelope no longer describes the machine — but the AC-vs-battery conclusion itself has not been re-tested.)* |
 | **`--mmproj`** | Removing the vision projector gives 383–388 — no better. Kept. |
-| **`platform_profile`** | `p14s-platform-profile.tsv` shows low-power 480 vs performance 486. Within noise. Also managed dynamically by `power-profiles-daemon`. |
+| **`platform_profile`** | `p14s-platform-profile.tsv` shows low-power 480 vs performance 486. Within noise. Also managed dynamically by `power-profiles-daemon`. **Re-tested 2026-08-22 on the replacement mainboard and it still holds: `balanced` 375.2 vs `performance` 373.8, −0.4%.** Worth re-running rather than inheriting, because the new board is 23% slower at the same clock and a cTDP change was the obvious suspect — it isn't one. `prof-results.tsv`, harness `bench-prof.sh`. |
 | **Server flags alone** | ~3%. Necessary but nowhere near sufficient. |
 
 ## Mesa driver version — tested, worth ~10% end to end
@@ -233,6 +477,17 @@ gives roughly **1150 t/s** on 40 CU. p14 measures **442 t/s** at 18k on 16 CU.
 **p14 is at CU-scaled parity with the reference Strix Halo rig running the same build.**
 Given the methodology differences above this is indicative rather than rigorous, but it is
 strong enough to reframe the open question below.
+
+> **⚠ No longer true on the replacement mainboard — 2026-08-22.** That parity argument was
+> built on 442 t/s. The current board measures **375 t/s** at `dpm-high`:
+>
+>     1150 / 375 ≈ 3.07      vs      40 CU / 16 CU = 2.5
+>
+> **~19% below CU-scaled parity**, where the old board was at it. This is the same deficit
+> that shows up against the P16s (−23%), and §3 of the re-measurement rules out both heat and
+> the power budget: throughput-per-clock is down ~23–26% *at identical power and temperature*.
+> The silicon is not the limit here, and neither is the thermal path — the memory path is the
+> remaining suspect. See TODO item 11.
 
 ## The last ~10% — closed 2026-08-07, it reproduces
 
@@ -962,8 +1217,13 @@ launch time as unchanged.
 | `llama.service.as-found` | the unit as it was before this investigation, for diffing |
 | `llama-test.service` | test unit for the `p14/disk-prompt-cache` fork — deliberately a byte-for-byte copy of `llama.service`'s flags plus the three `--cache-disk-*` flags and the fork binary, so any difference is the fork and not the configuration. `Conflicts=llama.service`: both bind `127.0.0.1:8080` and both want the whole GPU. Note `--cache-disk-min-tokens 20000` is a **reconstruction**, not a recorded value — see the comment in the unit |
 | `bench-local.sh` | benchmark harness, same prompt shape as refhost's `bench-host.sh` |
-| `bench-results.tsv` | every measurement taken, all arms |
-| `set-dpm-high.sh` | reapplies the DPM setting after a reboot |
+| `bench-results.tsv` | every measurement taken on the **original mainboard**, all arms — history, not guidance |
+| `bench-p16.sh` / `p16s-bench-results.tsv` / `p16s.md` | the 2026-08-21 P16s loan: a 2×2 of DPM × CPU governor that killed the governor theory. Still the best comparison point for this machine, because it ran the same server on the same DIMMs |
+| `bench-dpm.sh` / `dpm-results.tsv` | **2026-08-22, the replacement mainboard.** DPM `auto` vs `high`, 4 interleaved rounds with GPU telemetry. The governor arm is dropped, so the same wall-clock buys more reps on the one live variable |
+| `bench-prof.sh` / `prof-results.tsv` | **2026-08-22.** `platform_profile` A/B at fixed DPM, testing whether the replacement board is power-capped. Switches profile via `powerprofilesctl`, not a raw sysfs write — `power-profiles-daemon` owns that file and will fight you |
+| `analyze.py` | summarises a telemetry TSV by arm, with and without round 1, plus a per-round drift table. Expects the `bench-p16.sh` column layout (with the `probe` column) |
+| `root-helper.sh` | long-lived root helper so a whole benchmark needs one sudo dialog. **Read the trap comments at the top before reusing it** — two silent-hang failure modes, both hit on 2026-08-22 |
+| `set-dpm-high.sh` | reapplies the DPM setting after a reboot. **Mostly obsolete on the replacement board** — see TODO item 2 |
 | `llama-slot-save.sh` | snapshots a warm slot to disk — works (425 MiB, 126 ms), but **superseded**: at `-np 1` the slot rarely holds the startup prompt when you ask, so it refuses (`min 20000`) more often than it fires |
 | `llama-slot-restore.sh` | restores one — was a no-op, **fixed 2026-08-11** by persisting `prompt.checkpoints`; still not wired up, and no longer needed since `--cache-disk-path` covers this without any script |
 | `TODO.md` | open items |

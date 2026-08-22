@@ -1,0 +1,52 @@
+# p14 DPM {auto,high} interleaved benchmark, 2026-08-22.
+#
+# HOST IS A REPLACEMENT MAINBOARD. The original p14 board died and was replaced; this is
+# new board + new power subsystem + BIOS R2XET40W (1.20). The DIMMs are the P16s' own
+# 2x 48 GB DDR5-5600 SODIMMs, physically moved over, so RAM is identical to p16s-bench-results.tsv.
+#
+# Server: llama-test.service (the p14/disk-prompt-cache fork) -- the SAME server the P16s
+# numbers were taken against on 2026-08-21 (verified: llama.service never started that day),
+# so p16s-bench-results.tsv and this file are a clean A/B.
+#
+# Prompt shape identical to bench-local.sh (1500x code line + nonce => ~18k tok, cold
+# prefill, max_tokens=300, temp 0.7). Harness: bench-dpm.sh, 4 interleaved rounds.
+# CPU governor left alone at powersave -- closed 2026-08-21 as worth ~0% (p16s.md).
+# platform_profile = balanced throughout.
+#
+# GPU telemetry sampled at 1 Hz; medians over samples with gpu_busy_percent > 50.
+#
+# Result, steady state (round 1 dropped), n=3:
+#   dpm-high   PP 374.9   TG 17.81   2900 MHz   46.7 W   84.7 C
+#   dpm-auto   PP 350.2   TG 19.67   2247 MHz   24.0 W   67.3 C
+# DPM high is +7.0% PP, -9.5% TG, for +94% power and +17 C. It is NOT the ~70% lever the
+# README describes -- that lever belonged to the dead board.
+#
+# Side by side with p16s-bench-results.tsv (gov-powersave, steady state, round 1 dropped):
+#
+#   arm     metric      P16s      p14(new)   delta
+#   auto    PP          429.7     350.2      -18.5%
+#   auto    sclk        1971 MHz  2169 MHz   +10.0%
+#   auto    power       24.0 W    24.0 W       0.0%
+#   auto    temp        71.5 C    67.3 C      -4.2 C
+#   high    PP          487.7     374.9      -23.1%
+#   high    sclk        2899 MHz  2900 MHz     0.0%
+#   high    power       54.8 W    46.7 W     -14.8%
+#   high    temp        91.5 C    84.7 C      -6.8 C
+#   both    PP per MHz  .2180/.1682  .1614/.1293   -25.9%/-23.2%
+#
+# The auto row is the decisive one: IDENTICAL power, 10% HIGHER clock, 4 C COOLER, and still
+# 18.5% slower. Not thermal, not a power cap. Throughput-per-clock is down 23-26% in both
+# arms, invariant to power state. The board is MEMORY-STALLED -- see TODO item 11.
+#
+# HARNESS GAP: this script samples sclk only. mclk/fclk/socclk were never sampled on either
+# box, so the memory path has no A/B. Sample all four next time.
+#
+# arm	rep	prompt_n	cache_n	PP	TG	draft%	sclk	busy	W	degC
+dpm-auto	1	18039	0	372.40	20.949	80.00	2480	100	28.1	68.0
+dpm-high	1	18038	0	378.06	18.245	77.78	2900	99	45.1	81.0
+dpm-auto	2	18039	0	352.94	20.373	77.02	2204	100	24.0	66.0
+dpm-high	2	18040	0	378.46	17.608	74.17	2900	99	46.0	82.0
+dpm-auto	3	18037	0	345.33	20.009	76.69	2137	100	24.0	67.0
+dpm-high	3	18036	0	370.08	17.215	70.56	2900	100	47.0	85.0
+dpm-auto	4	18036	0	352.37	18.617	67.06	2167	100	24.0	69.0
+dpm-high	4	18038	0	376.18	18.607	81.06	2900	99	47.1	87.0

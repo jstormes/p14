@@ -1,0 +1,41 @@
+# p14 platform_profile {balanced,performance} A/B at fixed DPM high, 2026-08-22.
+#
+# HOST IS A REPLACEMENT MAINBOARD -- see dpm-results.tsv for the full provenance note.
+# Server: llama-test.service (the p14/disk-prompt-cache fork), same as p16s-bench-results.tsv.
+# Harness: bench-prof.sh, 3 interleaved rounds, GPU DPM pinned to high throughout.
+# Profile switched with powerprofilesctl, not a raw sysfs write.
+#
+# Q: the board makes 375 PP where the P16s made 488 at the same 2900 MHz on the same DIMMs.
+#    Is it running a lower cTDP? platform_profile is the knob that would show it.
+# A: NO. balanced 375.2 vs performance 373.8 -- -0.4%. README's "Ruled out" verdict on
+#    platform_profile survives the board swap.
+#
+# The per-round drift under sustained dpm-high (it heats, PP decays ~1.4%):
+#
+#     round 1   379.1 PP   45.0 W   80 C
+#     round 2   376.6 PP   49.0 W   90 C
+#     round 3   373.7 PP   49.1 W   94 C
+#
+# NOTE -- an earlier version of this header concluded from the above that the board is
+# thermally limited. THAT WAS WRONG and is retracted. The side-by-side against
+# p16s-bench-results.tsv at DPM auto settles it: identical 24.0 W, p14 clocks 10% HIGHER
+# (2169 vs 1971 MHz), runs 4 C COOLER, and is still 18.5% slower. Throughput-per-clock is
+# down 23-26% in BOTH DPM arms -- invariant to power state, which is not how a thermal limit
+# behaves. The lower power at dpm-high is a SYMPTOM: a GPU at 100% busy and the same clock
+# drawing 15% less power is stalling, not throttling.
+#
+# Current reading: the board is MEMORY-STALLED. Suspect the memory path after the DIMM move
+# (training, channel interleave, fabric/uclk ratios). Ruled out: platform_profile, thermal,
+# power cap, DPM, governor, GPU identity (0x150e rev 0xd1, 32 SIMDs = 16 CU), all GPU clock
+# domains (mclk 2800, fclk 1960, socclk 1472 -- all at max), llama.cpp build, Mesa version.
+#
+# HARNESS GAP: mclk/fclk/socclk were never sampled on the P16s, so they have nothing to be
+# compared against. Sample all four clock domains next time, not just sclk. See TODO item 11.
+#
+# arm	rep	prompt_n	cache_n	PP	TG	draft%	sclk	busy	W	degC
+prof-balanced	1	18037	0	379.05	17.557	73.14	2900	99	45.0	80.0
+prof-performance	1	18037	0	377.44	18.118	77.02	2900	99	48.0	87.0
+prof-balanced	2	18039	0	376.64	17.262	71.14	2900	99	49.0	90.0
+prof-performance	2	18035	0	374.98	17.337	71.84	2900	99	49.1	92.0
+prof-balanced	3	18040	0	373.69	17.933	75.63	2900	99	49.1	94.0
+prof-performance	3	18038	0	372.66	17.267	71.14	2899	100	50.0	95.0

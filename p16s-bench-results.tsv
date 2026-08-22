@@ -1,0 +1,63 @@
+# P16s benchmark measurements, 2026-08-21.
+# Prompt shape identical to bench-local.sh / p14s-setup/toolbox-raw/bench-host.sh
+# (1500x code line + random nonce => ~18k tokens, cold prefill, max_tokens=300, temp 0.7).
+#
+# HOST IS NOT p14. ThinkPad P16s Gen 4 AMD (21RX000JUS), same SoC as p14
+# (Ryzen AI 9 HX PRO 370 / Radeon 890M, gfx1150), same BIOS R2XET39W 1.19,
+# same GTT 49152 MiB, same llama.cpp build 458 (b10333-b746971b5), same bundled
+# Mesa 26.3.0 via the toolbox wrapper, same model and same sec9c flags.
+# Differs in chassis (16" vs 14") and RAM: 96 GB as 2x48 GB DDR5-5600 SODIMM,
+# vs p14's 60 GB. Hostname is still "p14" -- the install was moved, not rebuilt.
+#
+# Protocol: 2x2 of GPU DPM x CPU governor, 5 fully interleaved rounds (all four
+# arms visited every round, 20 runs total), single server process throughout.
+# All rows probe=1: sysfs telemetry (sclk/busy/power/temp) was sampled at 1 Hz
+# during every run, so the probe cost is common to all arms.
+# sclk/busy/watts/tempC are MEDIANS over samples where gpu_busy_percent > 50.
+#
+# Round 1 is a cold-chassis outlier in the dpm-auto arms only (476.6 falling to
+# ~430 by round 2 and staying there). This is the same "discard the first rep"
+# effect the p14 README documents, but the mechanism here is chassis heat soak,
+# not GPU clock ramp -- the dpm-high arms show no round-1 effect at all.
+#
+arm	idx	probe	prompt_n	cache_n	PP	TG	draft_pct	sclk	busy	watts	tempC
+dpm-auto/gov-powersave	1	1	18037	0	476.58	22.641	72.13	2523	100	32.0	67.0
+dpm-auto/gov-performance	1	1	18039	0	449.06	22.068	70.16	2249	100	28.0	63.0
+dpm-high/gov-powersave	1	1	18036	0	480.29	22.103	79.57	2900	97	58.1	88.0
+dpm-high/gov-performance	1	1	18039	0	481.02	22.634	83.48	2892	99	57.1	96.0
+dpm-auto/gov-powersave	2	1	18037	0	431.83	22.093	70.85	1986	100	24.0	68.0
+dpm-auto/gov-performance	2	1	18039	0	438.50	23.843	80.35	2026	100	24.0	64.0
+dpm-high/gov-powersave	2	1	18038	0	491.84	21.916	79.22	2900	98	55.1	89.0
+dpm-high/gov-performance	2	1	18038	0	480.85	21.329	75.63	2868	98	54.1	96.0
+dpm-auto/gov-powersave	3	1	18039	0	430.75	23.005	75.95	1974	100	24.0	71.0
+dpm-auto/gov-performance	3	1	18037	0	436.95	22.958	75.95	2018	100	24.0	66.0
+dpm-high/gov-powersave	3	1	18038	0	489.08	21.752	78.45	2899	99	55.0	91.0
+dpm-high/gov-performance	3	1	18037	0	481.37	21.860	79.22	2829	99	52.1	98.0
+dpm-auto/gov-powersave	4	1	18039	0	429.70	22.559	73.86	1969	100	24.0	73.0
+dpm-auto/gov-performance	4	1	18036	0	437.09	22.212	71.54	2004	100	24.0	67.0
+dpm-high/gov-powersave	4	1	18038	0	487.70	21.406	76.27	2899	99	54.1	93.0
+dpm-high/gov-performance	4	1	18037	0	480.59	21.237	75.21	2807	98	51.1	98.0
+dpm-auto/gov-powersave	5	1	18038	0	426.55	23.028	76.60	1956	100	24.0	74.0
+dpm-auto/gov-performance	5	1	18040	0	435.21	22.137	71.14	1999	100	24.0	68.0
+dpm-high/gov-powersave	5	1	18037	0	482.00	21.654	78.45	2897	98	55.0	93.0
+dpm-high/gov-performance	5	1	18038	0	482.90	21.365	76.27	2762	98	49.1	98.0
+#
+# Steady state (rounds 2-5, n=4 per arm):
+#   arm                        PP    sd     TG    sclk    W    degC
+#   dpm-auto  / gov-powersave   429.7  2.3  22.67   1971   24   71.5
+#   dpm-auto  / gov-performance 436.9  1.3  22.79   2012   24   66.2
+#   dpm-high  / gov-powersave   487.7  4.1  21.68   2899   55   91.5   <- fastest
+#   dpm-high  / gov-performance 481.4  1.0  21.45   2816   52   97.5
+#
+# Main effects, steady state:
+#   DPM high vs auto        +12.6%  (483.6 vs 435.6 pooled over governor)
+#   gov performance vs pwr   +0.1%  (459.2 vs 458.7 pooled over DPM) -- nothing
+#   interaction: performance helps at auto (+1.7%), hurts at high (-1.3%)
+#
+# p14 comparison, same prompt, same software, both at steady state:
+#   config                       p14      P16s     delta
+#   DPM auto  (untuned)          232      436      +88%
+#   DPM high  + bundled Mesa     483      488       +1%
+# The P16s' UNTUNED state (436) is within 10% of the p14's FULLY TUNED state (483).
+# The p14's presenting problem -- prefill at half the documented rate on a cold
+# "auto" GPU -- does not occur on this chassis.
