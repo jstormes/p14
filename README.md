@@ -48,8 +48,14 @@ Start with [`TODO.md`](TODO.md) for current state and open items, and
 > second finding comes from: **the replacement board is 23% slower than the P16s at an
 > identical clock, at identical power, on identical RAM.** It is not thermally limited and not
 > power-capped — at DPM `auto` it draws the same 24 W, clocks 10% *higher*, runs cooler, and
-> still loses 18.5%. That is a memory stall, and it is worth chasing while the repair is
-> recent. See TODO item 11.
+> still loses 18.5%. That is a memory stall.
+>
+> **But probably not the board's fault.** `amd_iommu=off` was removed from the kernel command
+> line on 2026-08-21 to unblock the NPU, and every measurement taken before that change reads
+> ~488 while every one after reads ~375 — including on the P16s itself. The model is
+> GTT-resident, so the IOMMU puts address translation on every GPU access to system RAM. The
+> flag is **restored and staged; it needs a reboot, and the A/B has not been run yet.** See §4
+> and TODO item 11.
 
 Investigation date: **2026-08-06** (ongoing)
 Last re-measured: **2026-08-22**
@@ -139,6 +145,9 @@ you watch and prefill is mostly cache hits — it is a net loss. See TODO item 2
 
 ### 2. The new board is ~23% slower at the top end than the P16s
 
+> ⚠ **Read §4 first.** This section and §3 are confounded by a kernel boot parameter that
+> changed between the two datasets. The 23% may not be the mainboard at all.
+
 Same fork, same flags, same model, and *the same physical DIMMs*:
 
 | | P16s (2026-08-21) | new p14 board (2026-08-22) | delta |
@@ -160,6 +169,10 @@ So the honest summary of the swap is: **much better untuned, meaningfully worse 
 As-found prefill went 232 → 350 (+51%); best-case prefill went 483 → 375 (−22%).
 
 ### 3. It is memory-stalled — not power-capped, and not thermally limited
+
+> ⚠ **The "memory-stalled" reading holds; attributing it to the *board* does not.** §4
+> identifies a mechanism that produces exactly this signature and that changed between the
+> two datasets: the IOMMU was switched back on.
 
 The obvious first suspect was a lower power ceiling — a cTDP change in the new BIOS, which
 `platform_profile` would expose. **It is not that.** `bench-prof.sh`, 3 interleaved rounds at
@@ -219,7 +232,57 @@ alternating with `auto`, the board climbs to 94–95 °C and prefill decays with
 That is a ~1.4% decay across three rounds in a 14" chassis, and it is why the `dpm-high`
 power/temp figures in §2 read cooler than the machine actually runs. **It is not the 23%.**
 
-### 4. The P16s produced this same signature — when something was competing for memory
+### 4. ⚠ Probable cause found — `amd_iommu=off` was removed on 2026-08-21
+
+**Sections 2 and 3 are confounded, and their conclusion is probably wrong.** They compare a
+P16s measured with `amd_iommu=off` against a p14 measured with the IOMMU **on**, and attribute
+the whole gap to the mainboard. That is not a clean A/B.
+
+`npu-after-reboot.sh` records the change and why it was made:
+
+> the NPU was blocked by TWO things, set together on 2026-08-06:
+>   1. `/etc/modprobe.d/blacklist-amdxdna.conf`
+>   2. **`amd_iommu=off` on the kernel cmdline** (removed from `/etc/default/grub`)
+> (2) was the real blocker: XDNA2 needs SVA, SVA needs the IOMMU
+
+`/etc/default/grub` was edited at **13:13** on 2026-08-21 and the box rebooted at **13:16**.
+The IOMMU has been on ever since — 31 groups. Line the datasets up against that boundary; all
+of them are the same llama.cpp server at 2900 MHz:
+
+| dataset | written | IOMMU | PP | W |
+|---|---|---|---|---|
+| `p16s-bench-results.tsv` | 11:59 | **off** | **480–492** | 54–58 |
+| `results.tsv`, first rep | 13:15 | **off** | **488** | 56 |
+| *— grub edited 13:13, reboot 13:16 —* | | | | |
+| `lemonade-deb-interleaved.tsv` | 14:03 | **on** | **360–385** | 43–47 |
+| `dpm-results.tsv` (p14) | 08-22 | **on** | **374.9** | 46.7 |
+
+**Every pre-reboot number is ~488; every post-reboot number is ~375.** The split falls on the
+boot parameter, not on the mainboard swap — and it explains the §3 signature exactly. The
+model is GTT-resident, i.e. system RAM reached through the GART, so with the IOMMU on **every
+GPU access to those ~36 GiB carries address translation.** That is a memory stall by
+construction: clock stays pinned, power falls because the GPU stalls instead of switching, and
+prefill and generation are hit together.
+
+It is also consistent with what this file already recorded independently — the
+kyuz0 cross-check below lists `amd_iommu=off` as worth **5–12%**. On a workload that lives
+entirely in GTT, landing nearer 20% is unsurprising.
+
+> **Status: staged, not yet confirmed.** `amd_iommu=off` was restored to
+> `/etc/default/grub` on 2026-08-22 and `update-grub` run (3 boot entries carry it; previous
+> config saved to `/etc/default/grub.bak-claude-20260822`). **It takes a reboot to take
+> effect, and the A/B has not been run yet.** Until `bench-dpm.sh` is re-run on the new boot,
+> this is a strong correlation with a correct-looking mechanism — not a measured result.
+>
+> Nothing still in use needs the IOMMU: the NPU/FastFlowLM path it was re-enabled for was
+> abandoned as not competitive. The lemonade GTT parameters are untouched by the revert — the
+> two grub files differ by exactly the one token.
+
+**If the re-run comes back at ~480**, §2 and §3 collapse into "the boot parameter", the
+mainboard is exonerated, and TODO item 11 closes. **If it stays at ~375**, the IOMMU was a red
+herring, §2 and §3 stand as written, and item 11's memory-path leads are the next step.
+
+### 5. The P16s produced this same signature — when something was competing for memory
 
 The 2026-08-21 session left three other datasets, all the same box and the same llama.cpp
 server on the same day. They disagree wildly, and the disagreement is the most useful thing

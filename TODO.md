@@ -12,7 +12,7 @@
 > | 3, 4, 5, 6, 7 | unchanged |
 > | 8, 9 | memory worries largely defused by the RAM upgrade |
 > | 10 | ⏳ new — `amdgpu.gttsize` still sized for the 60 GB box |
-> | 11 | ⏳ new — the board is 23% short; not thermal, not power — a memory stall |
+> | 11 | ⏳ new — 23% short; prime suspect is `amd_iommu=off` being removed on 08-21. **Reboot and re-bench.** |
 
 
 ## 2. ~~DPM `high` is manual, and the GUI cannot reach it~~ — closed 2026-08-22, stop doing this
@@ -418,7 +418,46 @@ they were written — see the note added to both.
 
 ---
 
-## 11. ⏳ Open 2026-08-22 — the replacement mainboard runs 23% short, and it looks like a memory stall
+## 11. ⏳ Open 2026-08-22 — 23% short, and the prime suspect is `amd_iommu=off` being gone
+
+> ### → DO THIS FIRST: reboot, then re-run `bench-dpm.sh`
+>
+> `amd_iommu=off` was **removed** from `/etc/default/grub` at 13:13 on 2026-08-21 to unblock
+> the NPU (`npu-after-reboot.sh` documents it: XDNA2 needs SVA, SVA needs the IOMMU). The box
+> rebooted at 13:16 and the IOMMU has been on ever since — 31 groups.
+>
+> Every llama.cpp measurement taken **before** that reboot reads ~488. Every one **after**
+> reads ~375 — *including on the P16s itself*, which is what makes this more than a hunch:
+>
+> | dataset | written | IOMMU | PP @ 2900 MHz | W |
+> |---|---|---|---|---|
+> | `p16s-bench-results.tsv` | 11:59 | **off** | **480–492** | 54–58 |
+> | `results.tsv`, first rep | 13:15 | **off** | **488** | 56 |
+> | *grub edited 13:13, reboot 13:16* | | | | |
+> | `lemonade-deb-interleaved.tsv` | 14:03 | **on** | **360–385** | 43–47 |
+> | `dpm-results.tsv` (p14) | 08-22 | **on** | **374.9** | 46.7 |
+>
+> **Mechanism fits exactly.** The model is GTT-resident — system RAM via the GART — so with
+> the IOMMU on, every GPU access to ~36 GiB carries address translation. Clock stays pinned,
+> power drops because the GPU stalls rather than switches, PP and TG fall together. That is
+> the §3 signature, by construction. `README.md`'s kyuz0 cross-check independently rates
+> `amd_iommu=off` at 5–12%; ~20% on a fully GTT-resident workload is plausible.
+>
+> **Staged 2026-08-22:** `amd_iommu=off` restored to `/etc/default/grub`, `update-grub` run,
+> 3 boot entries carry it, previous config saved to `/etc/default/grub.bak-claude-20260822`.
+> **Needs a reboot. The A/B has not been run.**
+>
+> Nothing in use needs the IOMMU — the NPU/FastFlowLM path it was re-enabled for was abandoned
+> as not competitive. The two grub files differ by exactly that one token; the lemonade GTT
+> parameters are untouched.
+>
+> **Then:** if it returns to ~480, this item closes and the mainboard is exonerated — go back
+> and strike the "23% slower board" conclusion from `README.md` §2/§3. If it stays at ~375,
+> the IOMMU is a red herring and the leads below are live.
+
+*Everything below was written before the IOMMU was identified, and assumes the deficit is the
+board's. Treat it as the fallback plan.*
+
 
 The board swap left the machine **better untuned and worse tuned**: as-found prefill
 232 → 350 t/s, best-case prefill 483 → 375. Against the P16s — *same fork server, same flags,
