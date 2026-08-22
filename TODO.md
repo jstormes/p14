@@ -13,6 +13,7 @@
 > | 8, 9 | memory worries largely defused by the RAM upgrade |
 > | 10 | ⏳ new — `amdgpu.gttsize` still sized for the 60 GB box |
 > | 11 | ✅ new, closed same day — the 23% was `amd_iommu=off` being removed on 08-21, not the board. Restored; +26% confirmed |
+> | 12 | ✅ new, closed same day — BIOS VRAM carve-out does nothing; keep it minimum and take the 7 GB back |
 
 
 ## 2. ~~DPM `high` is manual, and the GUI cannot reach it~~ — closed 2026-08-22, stop doing this
@@ -394,6 +395,14 @@ annoyance. Revisit if "browser wasn't running" becomes a recurring failure.
 
 ## 10. ⏳ Open 2026-08-22 — `amdgpu.gttsize` is still sized for the 60 GB box
 
+> **Note added after the carve-out test.** Raising `gttsize` buys **capacity, not speed** —
+> `dpm-results-uma1g.tsv` shows that moving ~7 GiB of the model between VRAM and GTT changes
+> nothing measurable, so where the weights sit is not a performance question on this hardware.
+> Raise it only when you actually need a bigger context, a bigger model, or two resident.
+>
+> The 2026-08-22 carve-out change makes this *less* tight: RAM went 83 → 90 GiB usable, so
+> there is now more headroom to raise `gttsize` into if you want it.
+
 The kernel command line carries:
 
 ```
@@ -471,3 +480,53 @@ it had been false for a day, and nothing in DMI, the hostname, or the benchmark 
 **Harness gap, still open:** `bench-dpm.sh` and `bench-prof.sh` sample `sclk` only. Add
 `mclk`/`fclk`/`socclk` — and have the harness record `/proc/cmdline` into the TSV header, which
 would have caught this on the first run.
+
+---
+
+## 12. ✅ Closed 2026-08-22 — BIOS VRAM carve-out: tested, and it does nothing
+
+**Do not retest this.** The hypothesis was that the carve-out mattered: with 8 GB, VRAM ran
+100% full (8157/8192 MiB) and ~36 GiB of the model spilled into GTT. VRAM goes through the
+local aperture, GTT through the GART — and having just measured that a translation layer on GTT
+cost 26% (item 11), moving *more* of the model into VRAM looked like the obvious next win.
+
+Tested in the opposite direction — carve-out cut **8 GB → 1 GB**, so ~7 GiB *more* of the model
+went to GTT. Matched protocol, `amd_iommu=off` on both, `dpm-results-uma1g.tsv`:
+
+| arm | metric | UMA 8 GB | UMA 1 GB | delta |
+|---|---|---|---|---|
+| `auto` | PP | 418.1 | 420.3 | +0.5% |
+| `auto` | TG | 22.59 | 22.70 | +0.5% |
+| `high` | PP | 473.1 | 480.4 | +1.5% |
+| `high` | TG | 20.65 | 21.09 | +2.1% |
+| `high` | °C | 94.7 | 89.7 | −5.3% |
+
+**All PP/TG deltas are inside the run-to-run spread (sd ~5 on PP).** VRAM-vs-GTT placement is
+not a lever here. With `amd_iommu=off` the remaining GART translation runs on the GPU's own page
+tables with large fragments, and both pools are the same physical DDR5 at the same bandwidth —
+the IOMMU was an extra layer on top, and the GART itself is cheap.
+
+*(The −5 °C is the only figure outside obvious noise and is **not** attributed: thermal history
+across two separate boots is a likelier cause than the carve-out.)*
+
+**Keep the carve-out at minimum.** Same throughput, **7 GB back to the OS** (83 → 90 GiB).
+
+### Where to look instead
+
+`quant-q8-vs-q4kxl.tsv`, steady state: Q4_K_XL vs Q8_0 is **a wash on prefill** (253–254 vs
+257–259) and **+15% on generation** (19.6–21.0 vs 17.3–17.7). Halving the model's bytes did
+nothing for PP. So on this box **prefill is compute-bound, generation is bandwidth-bound** —
+memory-side tuning moves TG, not PP.
+
+Untested, cheapest first:
+
+1. **`-ub` / `-b` batch geometry.** Currently `-ub 1024 -b 8192`. Since prefill is
+   compute-bound this is the live prefill knob. One flag, one restart, no reboot.
+2. **KV cache `f16` vs `q8_0`.** Currently `q8_0` for both at 256k context, and there is GTT
+   headroom now. Trades dequant work against bandwidth; could go either way.
+3. **Q4_K_XL as the served model** — already +15% TG for no PP cost, but measured with the
+   IOMMU on; worth re-measuring. Quality call.
+4. **THP** — `madvise` today, `AnonHugePages: 0`. Free to test, but the weights live in device
+   memory, so it probably cannot help.
+5. **`amdgpu.vm_fragment_size`** — `-1` (auto) already picks the largest supported fragment.
+   Low value, costs a reboot. Last resort.

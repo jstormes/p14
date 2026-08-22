@@ -17,6 +17,22 @@ OUT="$1"; ROUNDS="${2:-3}"
 D=/sys/class/drm/card1/device
 HW=$(echo $D/hwmon/hwmon*)
 
+# --- provenance: record the configuration this run was taken under -------------
+# Added 2026-08-22. A missing amd_iommu=off went unnoticed for a day and produced
+# three wrong conclusions, including "the replacement mainboard is 23% slower".
+# One line in the header would have caught it on the first run. Never remove this.
+{
+  echo "# run: $(date -Is)"
+  echo "# cmdline: $(cat /proc/cmdline)"
+  echo "# iommu_groups: $(ls /sys/kernel/iommu_groups/ 2>/dev/null | wc -l)"
+  echo "# vram_total_MiB: $(( $(cat $D/mem_info_vram_total)/1024/1024 ))  gtt_total_MiB: $(( $(cat $D/mem_info_gtt_total)/1024/1024 ))"
+  echo "# mem_total_kB: $(awk '/MemTotal/{print $2}' /proc/meminfo)"
+  echo "# governor: $(cat /sys/devices/system/cpu/cpu0/cpufreq/scaling_governor)  platform_profile: $(cat /sys/firmware/acpi/platform_profile)"
+  echo "# server: $(systemctl --user is-active llama-test.service llama.service | tr '\n' ' ')"
+  echo "# bios: $(cat /sys/class/dmi/id/bios_version 2>/dev/null)  product: $(cat /sys/class/dmi/id/product_version 2>/dev/null)"
+} >> "$OUT"
+# ------------------------------------------------------------------------------
+
 sample() {
   while :; do
     s=$(grep '\*' $D/pp_dpm_sclk 2>/dev/null | awk '{print $2}' | tr -dc '0-9')

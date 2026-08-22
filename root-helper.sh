@@ -17,6 +17,18 @@
 #      so a new session cannot see the timestamp the preceding "sudo -A" just
 #      created; "sudo -n" fails instantly and silently under a redirect.
 #
+#   3. DO NOT clean up with "pkill -f root-helper.sh" (or "pkill -f bench-dpm.sh").
+#      The invoking shell's own command line contains that string -- it is in the
+#      sudo -p text, in CLAUDE_SUDO_CMDS, and in the eval'd command -- so pkill -f
+#      matches the shell running the pkill and kills it. The job dies mid-run with
+#      no error of its own. Kill by PID, or anchor the pattern to the interpreter:
+#        pkill -x -f '/bin/sh /home/jstormes/p14/root-helper.sh /home/jstormes/p14/.dpm-fifo'
+#
+#   4. DO NOT edit bench-dpm.sh / bench-prof.sh while a run is in flight. bash reads
+#      a script lazily by byte offset, so inserting lines shifts everything under the
+#      running interpreter and it resumes mid-token. Hit on 2026-08-22: the edit's
+#      code ran inside the live benchmark and corrupted its output file.
+#
 # After launching the helper, check it is actually alive before benchmarking:
 #   sudo -n ./root-helper.sh "$FIFO" &
 #   HELPER=$!; sleep 2; kill -0 $HELPER || { echo "helper failed to start"; exit 1; }

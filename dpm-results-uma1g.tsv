@@ -1,0 +1,55 @@
+# p14 DPM {auto,high} interleaved benchmark, 2026-08-22, BIOS VRAM carve-out reduced 8 GB -> 1 GB.
+#
+# Matched A/B against dpm-results-iommu-off.tsv: same board, same DIMMs, same server, same
+# harness, amd_iommu=off on both. The ONLY difference is the BIOS UMA frame-buffer size.
+#
+# WHY: with an 8 GB carve-out, VRAM ran 100% full (8157/8192 MiB) and the remaining ~36 GiB of
+# the model spilled into GTT. VRAM is reached through the local aperture, GTT through the GART,
+# and we had just measured that adding a translation layer to GTT (the IOMMU) cost 26%. The
+# hypothesis was that moving MORE of the model into VRAM would help. It was tested in the
+# opposite direction -- less VRAM, more GTT -- which is the same experiment.
+#
+# RESULT -- steady state, round 1 dropped, n=3:
+#
+#   arm    metric   UMA 8 GB   UMA 1 GB   delta
+#   auto   PP          418.1      420.3   +0.5%
+#   auto   TG          22.59      22.70   +0.5%
+#   auto   W            24.0       24.0   +0.0%
+#   high   PP          473.1      480.4   +1.5%
+#   high   TG          20.65      21.09   +2.1%
+#   high   W            53.1       53.4   +0.5%
+#   high   degC         94.7       89.7   -5.3%
+#
+# CONCLUSION: VRAM-vs-GTT PLACEMENT IS NOT A LEVER ON THIS HARDWARE. Moving ~7 GiB of the model
+# out of VRAM and into GTT changed nothing measurable -- every PP/TG delta is inside the
+# run-to-run spread (sd ~5 on PP). Do not spend a BIOS trip and a reboot on this again.
+#
+# Makes sense in hindsight: with amd_iommu=off the remaining GART translation runs on the GPU's
+# own page tables with large fragments, and VRAM and GTT are the same physical DDR5 at the same
+# bandwidth. The IOMMU was an EXTRA layer on top of that; the GART itself is cheap.
+#
+# The -5 C at dpm-high is the one difference outside obvious noise, but it is not attributed:
+# thermal history between two separate boots is the more likely explanation than the carve-out.
+#
+# PRACTICAL UPSHOT: keep the carve-out SMALL. Same throughput, and 7 GB returned to the OS
+# (83 -> 90 GiB usable). 1 GB is the better setting.
+#
+# Provenance block below is emitted by bench-dpm.sh itself, added 2026-08-22 after a missing
+# amd_iommu=off went unnoticed for a day and produced three wrong conclusions.
+#
+# run: 2026-08-22T14:05:11-05:00
+# cmdline: BOOT_IMAGE=/boot/vmlinuz-7.0.0-30-generic root=UUID=942786cd-c289-4351-b411-587d9de8c26d ro quiet splash amdgpu.gttsize=49152 ttm.pages_limit=12582912 ttm.page_pool_size=12582912 amd_iommu=off crashkernel=2G-4G:320M,4G-32G:512M,32G-64G:1024M,64G-128G:2048M,128G-:4096M
+# iommu_groups: 0
+# vram_total_MiB: 1024  gtt_total_MiB: 49152
+# mem_total_kB: 95104784
+# governor: powersave  platform_profile: balanced
+# server: active inactive 
+# bios: R2XET40W (1.20 )  product: ThinkPad P14s Gen 6 AMD
+dpm-auto	1	18038	0	450.09	23.076	78.45	2254	100	28.1	67.0
+dpm-high	1	18039	0	483.22	20.545	72.84	2900	98	53.1	87.0
+dpm-auto	2	18038	0	420.85	22.522	76.60	1947	100	24.0	67.0
+dpm-high	2	18038	0	483.11	20.241	71.14	2900	99	54.0	88.0
+dpm-auto	3	18040	0	420.50	22.399	75.63	1939	100	24.0	69.0
+dpm-high	3	18035	0	479.62	21.407	78.11	2899	98	53.1	90.0
+dpm-auto	4	18037	0	419.42	23.173	80.00	1933	100	24.0	70.0
+dpm-high	4	18037	0	478.45	21.636	79.91	2898	98	53.0	91.0

@@ -222,6 +222,56 @@ before suspecting hardware.** The README's "Ruled out" table said `amd_iommu=off
 set"; it had not been true for a day, and nothing in DMI, the hostname, or the benchmark output
 says otherwise.
 
+### 4. Memory tuning — what moves the needle and what doesn't
+
+Two levers were tested on 2026-08-22 beyond the IOMMU. **One is everything; the other is
+nothing.**
+
+| lever | effect | verdict |
+|---|---|---|
+| `amd_iommu=off` | **+19–26% PP, +15–16% TG** | the whole ballgame — §2 |
+| BIOS VRAM carve-out, 8 GB → 1 GB | +0.5–1.5% PP, +0.5–2.1% TG — inside noise | **no effect; keep it small** |
+
+**The carve-out result is worth stating as a negative, because the hypothesis was reasonable
+and wrong.** With an 8 GB carve-out, VRAM ran 100% full (8157/8192 MiB) and ~36 GiB of the
+model spilled into GTT. VRAM is reached through the local aperture, GTT through the GART — and
+having just measured that adding a translation layer to GTT cost 26%, moving *more* of the
+model into VRAM looked like the obvious next win.
+
+It isn't. Tested in the opposite direction — carve-out cut to 1 GB, so ~7 GiB *more* of the
+model went to GTT — **nothing changed**, matched protocol, `dpm-results-uma1g.tsv`:
+
+| arm | metric | UMA 8 GB | UMA 1 GB | delta |
+|---|---|---|---|---|
+| `auto` | PP | 418.1 | 420.3 | +0.5% |
+| | TG | 22.59 | 22.70 | +0.5% |
+| `high` | PP | 473.1 | 480.4 | +1.5% |
+| | TG | 20.65 | 21.09 | +2.1% |
+| | °C | 94.7 | 89.7 | −5.3% |
+
+Every PP/TG delta is inside the run-to-run spread (sd ~5 on PP). *(The −5 °C is the one figure
+outside obvious noise and is **not** attributed — thermal history across two separate boots is
+a likelier cause than the carve-out.)*
+
+In hindsight it fits: with `amd_iommu=off`, the remaining GART translation runs on the GPU's
+own page tables with large fragments, and VRAM and GTT are **the same physical DDR5 at the same
+bandwidth**. The IOMMU was an extra layer on top of that; the GART itself is cheap.
+
+> **Set the carve-out to minimum.** Same throughput, and **7 GB handed back to the OS**
+> (83 → 90 GiB usable). Do not spend another BIOS trip and reboot testing this.
+
+**What the quantisation data says about where to look next.** `quant-q8-vs-q4kxl.tsv`, steady
+state: Q4_K_XL vs Q8_0 is **a wash on prefill** (253–254 vs 257–259) but **+15% on generation**
+(19.6–21.0 vs 17.3–17.7). Halving the model's bytes did nothing for PP and helped TG — so on
+this box **prefill is compute-bound and generation is bandwidth-bound.** Memory-side tuning
+will move TG and largely leave PP alone; expect prefill wins to come from batch/kernel work
+instead.
+
+Untested and still open: `-ub`/`-b` batch geometry (the live prefill knob, since prefill is
+compute-bound), KV cache `f16` vs `q8_0`, and THP (`madvise` today, `AnonHugePages: 0`, and the
+weights live in device memory so it probably cannot help). `amdgpu.vm_fragment_size` is `-1`
+(auto, already picks the largest supported fragment) — low value, costs a reboot.
+
 ---
 
 ## Presenting problem
