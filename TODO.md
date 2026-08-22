@@ -14,6 +14,7 @@
 > | 10 | ⏳ new — `amdgpu.gttsize` still sized for the 60 GB box |
 > | 11 | ✅ new, closed same day — the 23% was `amd_iommu=off` being removed on 08-21, not the board. Restored; +26% confirmed |
 > | 12 | ✅ new, closed same day — BIOS VRAM carve-out does nothing; keep it minimum and take the 7 GB back |
+> | 13 | ✅ new, closed same day — speculative decoding already optimal; `n-max` is a no-op, ngram types are worse |
 
 
 ## 2. ~~DPM `high` is manual, and the GUI cannot reach it~~ — closed 2026-08-22, stop doing this
@@ -530,3 +531,48 @@ Untested, cheapest first:
    memory, so it probably cannot help.
 5. **`amdgpu.vm_fragment_size`** — `-1` (auto) already picks the largest supported fragment.
    Low value, costs a reboot. Last resort.
+
+---
+
+## 13. ✅ Closed 2026-08-22 — speculative decoding: current config is already optimal
+
+Two questions, both answered, **neither requiring a change**.
+
+**1. `--spec-draft-n-max` is a no-op with `draft-mtp`. Do not touch it.**
+
+The unit sets `2`; the build defaults to `3`; acceptance runs at ~76%. That looked like an
+obvious free win. It isn't — measured per-request with `speculative.n_max` at 1, 2 and 6, draft
+tokens per output token were **0.74 / 0.77 / 0.77**. Qwen3.6's MTP head emits **one** draft
+token per step regardless, so the cap is not the binding constraint.
+
+**2. `draft-mtp` is the best of the four available types, worth +13% TG.**
+
+`bench-spec.sh`, 3 rounds, 18k cold prompt, 400 generated tokens, one server per arm
+(`spec-results.tsv`):
+
+| arm | TG | sd | vs `none` | draft/tok | accept% | PP |
+|---|---|---|---|---|---|---|
+| `none` | 18.86 | 0.06 | — | 0.00 | 0.0 | 449.8 |
+| **`draft-mtp`** *(configured)* | **21.32** | 0.78 | **+13.0%** | 1.00 | **65.9** | 431.2 |
+| `ngram-cache` | 12.78 | 3.40 | **−32.3%** | 0.59 | 12.7 | 445.8 |
+| `ngram-map-k` | 18.26 | 0.40 | −3.2% | 0.16 | 7.6 | 433.2 |
+
+**Nothing to change.** The ngram variants are recorded so nobody retries them: their drafts are
+rejected 87–92% of the time, and `ngram-cache` is **worse than no speculation at all** — rejected
+drafts cost verify work for nothing. `draft-eagle3`, `draft-dflash` and `draft-dspark` were not
+tested; they need a separate draft model, which this box does not have.
+
+**The trade, honestly:** `draft-mtp` costs ~4% of *prefill* to buy +13% of *generation*. Net
+positive for interactive use, where prefill is mostly cache hits and generation is what you
+watch.
+
+⚠ **Method caveat:** arms ran in fixed order within each round rather than randomised, so
+position and thermal effects are not fully separated from arm effects. The TG gaps are far too
+large for that to matter; the ~4% PP figure is the one to re-measure with randomised order
+before citing it as exact.
+
+### What is left on the TG side
+
+Speculation is now closed. The remaining bandwidth-side levers are item 12's list —
+**Q4_K_XL (+15% TG measured, PP a wash)** is the largest, and it is a quality call rather than a
+tuning one. KV `f16` vs `q8_0` is the next cheap test.

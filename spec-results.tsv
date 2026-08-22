@@ -1,0 +1,62 @@
+# p14 speculative-decoding spec-type sweep, 2026-08-22.
+#
+# QUESTION: generation is the bandwidth-bound path on this box, and speculative decoding is the
+# technique that amortises weight reads across tokens. Is the configured --spec-type draft-mtp
+# the right choice, and is --spec-draft-n-max 2 leaving tokens on the table?
+#
+# FIRST FINDING, measured before this sweep: --spec-draft-n-max IS A NO-OP with draft-mtp.
+# Per-request speculative.n_max at 1, 2 and 6 gave draft-tokens-per-output-token of 0.74, 0.77
+# and 0.77 -- Qwen3.6's MTP head emits ONE draft token per step regardless. The cap is not the
+# binding constraint, so raising it (the unit sets 2, the build defaults to 3) buys nothing.
+# Do not bother changing it.
+#
+# METHOD: spec-type is a startup flag, so each arm is its own server. Only one large model may
+# be resident at a time on this box, so arms run strictly serially with a full teardown between
+# them, polling until the process is gone. llama-test.service stopped for the duration and
+# restarted at the end; its unit file was NOT modified. Test servers used a scratch prompt-cache
+# dir so the live cache was untouched. 3 rounds, 18k cold prompt, 400 generated tokens.
+#
+# RESULT -- all 3 rounds, n=3:
+#
+#   arm           TG mean   sd     vs none   draft/tok   accept%   PP mean
+#   none            18.86   0.06     +0.0%        0.00       0.0     449.8
+#   draft-mtp       21.32   0.78    +13.0%        1.00      65.9     431.2   <- configured
+#   ngram-cache     12.78   3.40    -32.3%        0.59      12.7     445.8
+#   ngram-map-k     18.26   0.40     -3.2%        0.16       7.6     433.2
+#
+# CONCLUSION: the configured draft-mtp is already the best of the four, and it is worth +13% TG.
+# NOTHING TO CHANGE. The ngram variants are recorded so nobody tries them again: their drafts
+# are rejected 87-92% of the time, and ngram-cache is CATASTROPHIC at -32% -- markedly worse
+# than no speculation at all, because rejected drafts cost verify work for nothing.
+#
+# The trade, stated honestly: draft-mtp costs ~4% of PREFILL (431.2 vs 449.8) to buy +13% of
+# generation. Net positive for interactive use, where prefill is mostly cache hits and
+# generation is what you watch.
+#
+# METHOD CAVEAT: arms ran in fixed order within each round (none, draft-mtp, ngram-cache,
+# ngram-map-k) rather than randomised, so position/thermal effects are not fully separated from
+# arm effects. The TG gaps are far too large for that to matter; the ~4% PP figure is the one to
+# re-measure with randomised order before citing it as exact.
+#
+# Provenance block below is emitted by the harness (bench-spec.sh).
+#
+# arm	rep	prompt_n	PP	TG	pred_n	draft_n	accepted	draft/tok	accept%	sclk	W
+# run: 2026-08-22T14:25:04-05:00
+# cmdline: BOOT_IMAGE=/boot/vmlinuz-7.0.0-30-generic root=UUID=942786cd-c289-4351-b411-587d9de8c26d ro quiet splash amdgpu.gttsize=49152 ttm.pages_limit=12582912 ttm.page_pool_size=12582912 amd_iommu=off crashkernel=2G-4G:320M,4G-32G:512M,32G-64G:1024M,64G-128G:2048M,128G-:4096M
+# iommu_groups: 0
+# vram_total_MiB: 1024  gtt_total_MiB: 49152
+# mem_total_kB: 95104784
+# dpm: auto  governor: powersave  platform_profile: balanced
+# bios: R2XET40W (1.20 )  product: ThinkPad P14s Gen 6 AMD
+none	1	18040	477.91	18.928	400	0	0	0.00	0.00	2484	32.0
+draft-mtp	1	18036	454.61	22.183	400	387	269	0.97	69.51	2381	31.1
+ngram-cache	1	18038	467.69	16.695	400	199	33	0.50	16.58	2270	28.1
+ngram-map-k	1	18038	445.76	18.608	400	48	5	0.12	10.42	2144	26.0
+none	2	18038	437.52	18.834	400	0	0	0.00	0.00	1971	24.0
+draft-mtp	2	18037	418.74	21.098	400	405	264	1.01	65.19	1973	24.0
+ngram-cache	2	18037	435.28	10.960	400	255	21	0.64	8.24	1968	24.0
+ngram-map-k	2	18036	426.58	18.352	400	48	3	0.12	6.25	1984	24.0
+none	3	18035	433.88	18.826	400	0	0	0.00	0.00	1969	24.0
+draft-mtp	3	18035	420.20	20.670	400	414	261	1.03	63.04	1972	24.0
+ngram-cache	3	18036	434.36	10.679	400	247	33	0.62	13.36	1968	23.1
+ngram-map-k	3	18038	427.21	17.832	400	96	6	0.24	6.25	1982	24.0
