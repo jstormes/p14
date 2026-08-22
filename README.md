@@ -1,5 +1,221 @@
 # p14 — running a local LLM coding stack on a ThinkPad P14s
 
+> **Setting up a new laptop? Start with [Build sheet — new machine, from scratch](#build-sheet--new-machine-from-scratch) below.**
+> It is the whole working configuration in ten steps. Everything after it is the research
+> record explaining *why* each step is there.
+
+---
+
+# Build sheet — new machine, from scratch
+
+Reproduces the current working setup on a fresh AMD Strix-class ThinkPad. Every value here is
+measured on this machine as of **2026-08-22**, not inherited from a vendor doc.
+
+**Target hardware:** ThinkPad P14s Gen 6 AMD (or similar) — Ryzen AI 9 HX PRO 370, Radeon 890M
+(gfx1150), **96 GB RAM**, Ubuntu 26.04.
+
+**What you get** (18k cold prompt, Qwen3.6-35B-A3B Q8_0, `dpm auto`, steady state):
+
+| | |
+|---|---|
+| prefill | **418 t/s** (473 at DPM `high`, but see §8) |
+| generation | **22.6 t/s** |
+| first turn, warmed directory | **~9 s** against ~100 s cold — measured end-to-end with the real client and the real ~34.8k prompt |
+
+That last line is the point of the whole project, and it comes from steps 6 and 7 (the client-side
+warm plus the disk prompt cache), not from any hardware tuning.
+
+---
+
+## 1. BIOS
+
+| setting | value | why |
+|---|---|---|
+| **UMA Frame Buffer Size** | **minimum (1 GB)** | Measured: 8 GB vs 1 GB is **zero difference** in throughput, and 1 GB hands **7 GB back to the OS**. The model lives in GTT either way. See §"Memory tuning" |
+
+> ⚠ **Only this setting was audited.** Nothing else in BIOS has been A/B'd on this machine — do
+> not infer that other defaults were deliberately chosen. If you change something else, measure it.
+
+Leave Secure Boot, virtualization, and thermal-mode defaults alone unless you have a reason.
+
+## 2. Kernel boot parameters — the highest-value step in this document
+
+Edit `/etc/default/grub`:
+
+```
+GRUB_CMDLINE_LINUX_DEFAULT="quiet splash amdgpu.gttsize=49152 ttm.pages_limit=12582912 ttm.page_pool_size=12582912 amd_iommu=off"
+```
+
+Then `sudo update-grub && sudo reboot`.
+
+| parameter | what it does |
+|---|---|
+| **`amd_iommu=off`** | **Worth +26%.** The model is GTT-resident, so with the IOMMU on, every GPU access to ~36 GiB of system RAM carries address translation. This single flag is worth more than the entire generational gap between two CPU families |
+| `amdgpu.gttsize=49152` | GTT ceiling in **MiB**. Must be ≤ RAM |
+| `ttm.pages_limit`, `ttm.page_pool_size` | **Must match `gttsize`**, expressed in 4 KiB pages: `MiB × 256`. Here `49152 × 256 = 12582912`. Setting only one has no effect |
+
+> **`amd_iommu=off` disables the NPU.** XDNA2 needs SVA, SVA needs the IOMMU. That is a
+> deliberate trade — the NPU path was evaluated and abandoned as not competitive. If you ever
+> want the NPU back, you are choosing it over 26% of your GPU throughput.
+
+**Verify after reboot — do not skip this:**
+
+```bash
+grep -o 'amd_iommu=off' /proc/cmdline          # must print amd_iommu=off
+ls /sys/kernel/iommu_groups/ | wc -l           # must print 0
+```
+
+> A missing `amd_iommu=off` went unnoticed here for a day and produced three wrong conclusions,
+> including "the replacement mainboard is 23% slower" — which was heading toward a warranty
+> claim against healthy hardware. **If throughput ever looks ~20% low, check `/proc/cmdline`
+> before suspecting anything else.**
+
+## 3. OS packages
+
+```bash
+sudo apt install -y libvulkan1 vulkan-tools \
+                    build-essential cmake git glslc libvulkan-dev
+```
+
+`libvulkan1` is the loader; `vulkan-tools` gives you `vulkaninfo` for diagnosis. The build tools
+are only needed for step 6. **You do not need `mesa-vulkan-drivers` for inference** — the toolbox
+in step 4 bundles its own driver, and the stock Ubuntu Mesa (26.0.3) is the one genuinely slow
+driver we measured (~404 t/s vs ~429).
+
+Confirm the GPU is visible:
+
+```bash
+vulkaninfo --summary | grep -i 'deviceName\|driverName'
+```
+
+## 4. Vulkan runtime — the Strix toolbox
+
+A portable tarball. No Docker, no PPA, no system-wide change:
+
+A portable tarball from [`Nathanw1014/strix-halo-llamacpp`](https://github.com/Nathanw1014/strix-halo-llamacpp/releases).
+Check the releases page for the newest — **this machine runs build 458 (`7a57bed`)**, which is
+*newer* than the `v0.2` tarball the toolbox's own README links (that one is build 319).
+
+```bash
+sudo mkdir -p /opt/llama && cd /opt/llama
+sudo curl -LO <newest-vulkan-portable-tarball-url>
+sudo tar xzf strix-halo-llamacpp-vulkan-portable.tar.gz
+# then rename/symlink whatever directory it unpacks to -> /opt/llama/strix-toolbox
+```
+
+*(Unpack it and look before renaming — the tarball's top-level directory name is not recorded
+here, and this machine's copy was installed by hand.)*
+
+Build version barely matters: **319 vs 458 measured within noise**, so the older `v0.2` release is
+a fine starting point if the newest is awkward to find.
+
+The result must give you `/opt/llama/strix-toolbox/vulkan/llama-server` — a **wrapper**, not the
+raw binary. It points `VK_ICD_FILENAMES` at its own bundled Mesa and sets seven `GGML_VK_*` vars.
+
+> **Launch the wrapper, not `vulkan/bin/llama-server`.** The raw binary falls back to system Mesa
+> and costs ~8%. The upstream install guide says otherwise and is wrong on this point.
+
+## 5. Models
+
+```bash
+sudo mkdir -p /models && sudo chown $USER:$USER /models
+```
+
+Place in `/models`:
+
+| file | size | role |
+|---|---|---|
+| `Qwen3.6-35B-A3B-Q8_0.gguf` | 37.8 GB | the model |
+| `mmproj-BF16.gguf` | 0.9 GB | vision projector |
+
+`Qwen3.6-35B-A3B-MTP-UD-Q4_K_XL.gguf` (22.9 GB) is a worthwhile alternative: **+15% generation,
+prefill unchanged.** Pure quality-vs-speed call.
+
+## 6. llama.cpp fork — the disk prompt cache
+
+Optional, and the single biggest *latency* win. It persists the prompt cache across the service
+restart that happens at every login, turning a ~40 s cold prefill into ~0.2 s.
+
+```bash
+mkdir -p ~/code && cd ~/code
+git clone https://github.com/jstormes/llama.cpp.git
+cd llama.cpp && git checkout p14/disk-prompt-cache
+cmake -B build -DCMAKE_BUILD_TYPE=Release -DGGML_VULKAN=ON -DGGML_NATIVE=ON
+cmake --build build -j$(nproc)
+```
+
+Skip this and use the toolbox binary from step 4 instead — you keep the throughput and lose only
+cache persistence.
+
+## 7. The systemd user service
+
+Copy `llama.service` (toolbox binary) **or** `llama-test.service` (the fork, what this machine
+actually runs) from this repo to `~/.config/systemd/user/`, then:
+
+```bash
+systemctl --user daemon-reload
+systemctl --user enable --now llama-test.service
+```
+
+> **Do not add `loginctl enable-linger`** expecting it to help. Linger *is* enabled on this
+> machine, but it is **not** what starts the service and is not required — the unit is bound to
+> `graphical-session.target`, so it starts at login and stops at logout by design. Linger keeps
+> user services running after logout, which is the opposite of what this unit wants.
+
+Three things in that unit are load-bearing:
+
+| | why |
+|---|---|
+| **user unit, not system** | GPU access comes from the **logind ACL on the active seat**, not group membership. A system unit starting at boot has no seat and cannot open the render node |
+| `PartOf=`/`After=graphical-session.target` | binds it to login, which is the only time the ACL exists |
+| **`-np 1`** | one slot. Makes the client's startup-prompt warm a strict win instead of a gamble — at `-np 4` a user who types immediately pays **double** |
+
+## 8. Power settings — do nothing
+
+**Leave GPU DPM at `auto`. Do not run `set-dpm-high.sh`.**
+
+| arm | prefill | generation | power | temp |
+|---|---|---|---|---|
+| **`auto`** (boot default) | 418.1 | **22.59** | **24 W** | **70.7 °C** |
+| `high` | **473.1** | 20.65 | 53 W | 94.7 °C |
+
+`high` buys 13% of prefill and costs 8.6% of generation, 29 W, and a 95 °C package. For
+interactive work that is a net loss — generation is what you watch, and prefill is mostly cache
+hits. Use it only for a long batch prefill.
+
+Leave the **CPU governor** alone too: measured at ~0%, and at `high` it clocks the GPU *lower*.
+
+## 9. Verify
+
+```bash
+grep -o 'amd_iommu=off' /proc/cmdline                      # amd_iommu=off
+ls /sys/kernel/iommu_groups/ | wc -l                       # 0
+cat /sys/class/drm/card*/device/mem_info_gtt_total         # 51539607552  (49152 MiB)
+systemctl --user is-active llama-test.service              # active
+curl -s localhost:8080/health                              # {"status":"ok"}
+~/p14/bench-local.sh baseline 5                            # ~418-450 PP, ~22 TG
+```
+
+Discard the first rep — the first request after a server start runs a few percent slow.
+
+## 10. Do not bother with these — already measured
+
+| | verdict |
+|---|---|
+| GPU DPM `high` | +13% prefill, **−8.6% generation**. Net loss interactively |
+| CPU governor `performance` | **~0%**, and it steals GPU power at `high` |
+| BIOS UMA carve-out size | **Zero difference** 8 GB vs 1 GB. Keep it minimum |
+| `platform_profile` | −0.4%. Nothing |
+| llama.cpp build version | 319 vs 458 within noise |
+| Mesa 26.1.6 vs bundled 26.3.0 | +0.4%. Only stock 26.0.3 is genuinely slow |
+| `--spec-draft-n-max` | **No-op** with `draft-mtp` — the MTP head emits one draft token per step regardless |
+| `--spec-type ngram-*` | **Worse than no speculation** (−32% for `ngram-cache`). Keep `draft-mtp`: +13% generation |
+| `--mmproj` removal | No gain. Keep vision |
+| AMDVLK, ROCm backends | Slower than RADV for this workload |
+| raising `amdgpu.gttsize` | Buys **capacity, not speed** |
+
+---
+
 **This repo is the research and operations record for a three-part project.** The other two parts
 are code; this one is the notes, the measurements, the systemd unit and the test harnesses that
 explain *why* that code looks the way it does. Read this first.
@@ -267,10 +483,27 @@ this box **prefill is compute-bound and generation is bandwidth-bound.** Memory-
 will move TG and largely leave PP alone; expect prefill wins to come from batch/kernel work
 instead.
 
+**Speculative decoding is closed too — the current setting is already the best available.**
+`--spec-draft-n-max` is a **no-op** with `draft-mtp` (per-request `n_max` of 1/2/6 gives
+0.74/0.77/0.77 draft tokens per output token — the MTP head emits one per step regardless), and
+a four-way sweep of `--spec-type` puts the configured `draft-mtp` well ahead:
+
+| arm | TG | vs `none` | accept% |
+|---|---|---|---|
+| `none` | 18.86 | — | — |
+| **`draft-mtp`** *(configured)* | **21.32** | **+13.0%** | 65.9 |
+| `ngram-cache` | 12.78 | **−32.3%** | 12.7 |
+| `ngram-map-k` | 18.26 | −3.2% | 7.6 |
+
+The ngram variants are worse than *no* speculation — their drafts are rejected 87–92% of the
+time and the verify work is wasted. `spec-results.tsv`, TODO item 13.
+
 Untested and still open: `-ub`/`-b` batch geometry (the live prefill knob, since prefill is
 compute-bound), KV cache `f16` vs `q8_0`, and THP (`madvise` today, `AnonHugePages: 0`, and the
 weights live in device memory so it probably cannot help). `amdgpu.vm_fragment_size` is `-1`
-(auto, already picks the largest supported fragment) — low value, costs a reboot.
+(auto, already picks the largest supported fragment) — low value, costs a reboot. The largest
+remaining TG lever is **Q4_K_XL (+15%, PP a wash)**, which is a quality call rather than a
+tuning one.
 
 ---
 
