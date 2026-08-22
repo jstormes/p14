@@ -216,9 +216,34 @@ Discard the first rep — the first request after a server start runs a few perc
 
 ---
 
+# ⏹ END OF SETUP
+
+**If you came here to build a machine, you are done.** Run the checks in §9, and stop.
+
+Everything below this line is the **research record** — the investigation, the measurements, the
+wrong turns and the retractions that produced the ten steps above. You do not need any of it to
+have a working box. Read it when you want to know *why* a setting is what it is, or when
+something behaves in a way the build sheet does not explain.
+
+| if you want… | go to |
+|---|---|
+| why `amd_iommu=off` matters so much | "The 2026-08-22 re-measurement" §2 |
+| why DPM `high` is not the lever the old notes claim | "The 2026-08-22 re-measurement" §1 |
+| what memory tuning was tried and rejected | "The 2026-08-22 re-measurement" §4 |
+| the prompt-cache design and its open items | [`disk-cache.md`](disk-cache.md), [`TODO.md`](TODO.md) |
+| current open items | [`TODO.md`](TODO.md) |
+
+> ⚠ **Numbers below predating 2026-08-22 were measured on a different mainboard** — the original
+> died and was replaced — **and many were taken while `amd_iommu=off` was missing**, so they read
+> ~20–26% low. Where that matters it is flagged inline. **The build sheet above is the current
+> truth; treat everything below as history unless it says otherwise.**
+
+---
+
 **This repo is the research and operations record for a three-part project.** The other two parts
 are code; this one is the notes, the measurements, the systemd unit and the test harnesses that
-explain *why* that code looks the way it does. Read this first.
+explain *why* that code looks the way it does. Start here if you are picking up the research
+rather than building a machine.
 
 | repo | branch | what it holds |
 |---|---|---|
