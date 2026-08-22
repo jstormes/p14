@@ -12,7 +12,7 @@
 > | 3, 4, 5, 6, 7 | unchanged |
 > | 8, 9 | memory worries largely defused by the RAM upgrade |
 > | 10 | ⏳ new — `amdgpu.gttsize` still sized for the 60 GB box |
-> | 11 | ⏳ new — 23% short; prime suspect is `amd_iommu=off` being removed on 08-21. **Reboot and re-bench.** |
+> | 11 | ✅ new, closed same day — the 23% was `amd_iommu=off` being removed on 08-21, not the board. Restored; +26% confirmed |
 
 
 ## 2. ~~DPM `high` is manual, and the GUI cannot reach it~~ — closed 2026-08-22, stop doing this
@@ -23,12 +23,16 @@
 >
 > | arm | PP | TG | W | °C |
 > |---|---|---|---|---|
-> | `auto` (as found) | 350.2 | **19.67** | **24.0** | **67.3** |
-> | `high` | **374.9** | 17.81 | 46.7 | 84.7 |
+> | `auto` (boot default) | 418.1 | **22.59** | **24.0** | **70.7** |
+> | `high` | **473.1** | 20.65 | 53.1 | 94.7 |
 >
-> **+7.0% prefill, −9.5% generation, +94% power, +17 °C.** For interactive coding that is a
-> net loss: generation is what you sit and watch, and prefill is mostly cache hits. Run it
-> only for a long batch prefill where 7% of PP is worth 22 W, and not otherwise.
+> *(Current config, i.e. `amd_iommu=off` restored — `dpm-results-iommu-off.tsv`. The first
+> version of this item quoted 350.2/374.9 from `dpm-results.tsv`, taken while the IOMMU was
+> still on; see item 11.)*
+>
+> **+13.2% prefill, −8.6% generation, +121% power, +24 °C, and a 95 °C package.** For
+> interactive coding that is a net loss: generation is what you sit and watch, and prefill is
+> mostly cache hits. Run it only for a long batch prefill, and not otherwise.
 >
 > The "resets to `auto` on boot" fragility that this item existed to manage is therefore no
 > longer a problem to solve — the boot default is now the setting you want. The decision
@@ -418,133 +422,52 @@ they were written — see the note added to both.
 
 ---
 
-## 11. ⏳ Open 2026-08-22 — 23% short, and the prime suspect is `amd_iommu=off` being gone
+## 11. ✅ Closed 2026-08-22 — it was `amd_iommu=off`, and the mainboard is fine
 
-> ### → DO THIS FIRST: reboot, then re-run `bench-dpm.sh`
->
-> `amd_iommu=off` was **removed** from `/etc/default/grub` at 13:13 on 2026-08-21 to unblock
-> the NPU (`npu-after-reboot.sh` documents it: XDNA2 needs SVA, SVA needs the IOMMU). The box
-> rebooted at 13:16 and the IOMMU has been on ever since — 31 groups.
->
-> Every llama.cpp measurement taken **before** that reboot reads ~488. Every one **after**
-> reads ~375 — *including on the P16s itself*, which is what makes this more than a hunch:
->
-> | dataset | written | IOMMU | PP @ 2900 MHz | W |
-> |---|---|---|---|---|
-> | `p16s-bench-results.tsv` | 11:59 | **off** | **480–492** | 54–58 |
-> | `results.tsv`, first rep | 13:15 | **off** | **488** | 56 |
-> | *grub edited 13:13, reboot 13:16* | | | | |
-> | `lemonade-deb-interleaved.tsv` | 14:03 | **on** | **360–385** | 43–47 |
-> | `dpm-results.tsv` (p14) | 08-22 | **on** | **374.9** | 46.7 |
->
-> **Mechanism fits exactly.** The model is GTT-resident — system RAM via the GART — so with
-> the IOMMU on, every GPU access to ~36 GiB carries address translation. Clock stays pinned,
-> power drops because the GPU stalls rather than switches, PP and TG fall together. That is
-> the §3 signature, by construction. `README.md`'s kyuz0 cross-check independently rates
-> `amd_iommu=off` at 5–12%; ~20% on a fully GTT-resident workload is plausible.
->
-> **Staged 2026-08-22:** `amd_iommu=off` restored to `/etc/default/grub`, `update-grub` run,
-> 3 boot entries carry it, previous config saved to `/etc/default/grub.bak-claude-20260822`.
-> **Needs a reboot. The A/B has not been run.**
->
-> Nothing in use needs the IOMMU — the NPU/FastFlowLM path it was re-enabled for was abandoned
-> as not competitive. The two grub files differ by exactly that one token; the lemonade GTT
-> parameters are untouched.
->
-> **Then:** if it returns to ~480, this item closes and the mainboard is exonerated — go back
-> and strike the "23% slower board" conclusion from `README.md` §2/§3. If it stays at ~375,
-> the IOMMU is a red herring and the leads below are live.
+`amd_iommu=off` was removed from `/etc/default/grub` at 13:13 on 2026-08-21 to unblock the NPU
+(`npu-after-reboot.sh`: XDNA2 needs SVA, SVA needs the IOMMU). Restored 2026-08-22 and
+rebooted. Same board, same DIMMs, same server, same harness, same power state — only the boot
+flag differs. Steady state, round 1 dropped, n=3 (`dpm-results-iommu-off.tsv`):
 
-*Everything below was written before the IOMMU was identified, and assumes the deficit is the
-board's. Treat it as the fallback plan.*
+| arm | metric | IOMMU on | IOMMU off | gain | P16s | vs P16s |
+|---|---|---|---|---|---|---|
+| `auto` | PP | 350.2 | **418.1** | **+19.4%** | 429.7 | −2.7% |
+| | TG | 19.67 | **22.59** | **+14.9%** | 22.67 | −0.3% |
+| | sclk | 2169 MHz | 1922 MHz | −11.4% | 1971 MHz | −2.5% |
+| `high` | PP | 374.9 | **473.1** | **+26.2%** | 487.7 | −3.0% |
+| | TG | 17.81 | **20.65** | **+16.0%** | 21.68 | −4.7% |
+| | W | 46.7 | **53.1** | **+13.7%** | 54.8 | −3.1% |
 
+**The board is within 3% of the P16s on both arms.** No hardware deficit. The model is
+GTT-resident, so the IOMMU put address translation on every GPU access to 36 GiB of system RAM;
+removing it restores both the throughput and the power draw (53.1 W at 2900 MHz, against the
+P16s' 54.8 W — the "low power" was stalling, not a cap).
 
-The board swap left the machine **better untuned and worse tuned**: as-found prefill
-232 → 350 t/s, best-case prefill 483 → 375. Against the P16s — *same fork server, same flags,
-and literally the same DIMMs* — it is **−23% PP and −18% TG at an identical 2900 MHz**.
+**Nothing further to do.** The NPU path the flag was removed for is abandoned as not
+competitive, so the revert costs nothing. Previous GRUB saved at
+`/etc/default/grub.bak-claude-20260822`.
 
-### The measurement that decides it
+### What this item is worth keeping for
 
-`gov-powersave`, steady state, round 1 dropped. `p16s-bench-results.tsv` vs `dpm-results.tsv`:
+Three readings were published and retracted before the cause was found. In order:
 
-| | metric | P16s | new p14 | delta |
-|---|---|---|---|---|
-| **`auto`** | PP | 429.7 | 350.2 | **−18.5%** |
-| | sclk | 1971 MHz | **2169 MHz** | **+10.0%** |
-| | power | 24.0 W | 24.0 W | **0.0%** |
-| | temp | 71.5 °C | 67.3 °C | −4.2 °C |
-| **`high`** | PP | 487.7 | 374.9 | **−23.1%** |
-| | sclk | 2899 MHz | 2900 MHz | 0.0% |
-| | power | 54.8 W | 46.7 W | −14.8% |
-| | temp | 91.5 °C | 84.7 °C | −6.8 °C |
-| | **PP per MHz** | 0.2180 / 0.1682 | 0.1614 / 0.1293 | **−25.9% / −23.2%** |
+1. *"Thermally limited — probably heatsink seating from the repair."* Killed by the DPM `auto`
+   row: identical power, higher clock, cooler, still slower.
+2. *"The replacement board is 23% slower at the top end."* Confounded — a P16s measured with
+   `amd_iommu=off` against a p14 measured with the IOMMU on. **This was heading toward a
+   warranty claim against a healthy board.**
+3. *"The P16s showed the same signature under lemonade contention."* Right observation, wrong
+   mechanism: `lemonade-deb-interleaved.tsv` was written at 14:03 on 2026-08-21, *after* the
+   13:16 reboot, so those runs had the IOMMU on too. A fourth data point for the flag.
 
-**At `auto`: same power, 10% higher clock, 4 °C cooler, 18.5% slower.** No thermal or
-power-headroom argument survives that. Throughput-per-clock is down ~23–26% in *both* arms —
-invariant to power state, which is not how a thermal limit behaves. The lower power at `high`
-is a symptom: a GPU at 100% busy and the same clock drawing 15% less power is stalling, not
-being throttled.
+The signature reading — "this is a memory stall" — was correct every time. What was wrong was
+attributing it to hardware without checking the software configuration hadn't moved underneath
+the comparison.
 
-> **Earlier reading, now retracted:** this item first concluded "thermal — probably heatsink
-> seating from the swap", from the `dpm-high` power/temp rows alone. The `auto` row kills it.
-> Do not re-derive the thermal story from §2's table without reading §3.
+**The rule:** when throughput on this box looks ~20% low, **check `/proc/cmdline` before
+suspecting hardware.** README's "Ruled out" table asserted `amd_iommu=off` was "already set";
+it had been false for a day, and nothing in DMI, the hostname, or the benchmark output said so.
 
-**What has been ruled out** (`dpm-results.tsv` + `prof-results.tsv`):
-
-| suspect | verdict |
-|---|---|
-| `platform_profile` / cTDP | **No.** `balanced` 375.2 vs `performance` 373.8, −0.4% |
-| thermal limiting | **No.** Deficit is identical at 24 W / 67 °C as at 47 W / 85 °C |
-| power cap | **No.** Same deficit at matched 24.0 W |
-| GPU DPM level | **No.** `high` is +7% PP and −9.5% TG; at max clock either way |
-| CPU governor | **No.** Closed 2026-08-21 on the P16s, ~0% |
-| wrong GPU / downbinned part | **No.** `0x150e` rev `0xd1`, 32 SIMDs = 16 CU, 2900 MHz max |
-| a GPU clock domain stuck low | **No.** `sclk` 2900, `mclk` 2800, `fclk` 1960, `socclk` 1472 — all at max under load |
-| llama.cpp build / Mesa version | **No.** Settled 2026-08-07, unchanged across the swap |
-| the server being a different one | **No.** Both datasets are `llama-test.service`; `llama.service` never started on 2026-08-21 (journal-verified) |
-
-**What is left: the memory path.** TG down 13–18% points the same way — generation is
-bandwidth-bound. The DIMMs are the same physical parts, so the suspicion is how the
-*replacement board* is driving them: training after the move, channel interleave, or
-fabric/`uclk` ratios.
-
-**The signature has been seen before, on known-good hardware.** `lemonade-deb-interleaved.tsv`
-— the P16s, same day, same llama.cpp server — records **360–385 PP at 2900 MHz, 43–47 W,
-76 °C**: cooler *and* slower *and* lower-power than the 480 the same box gave in
-`p16s-bench-results.tsv`. That happened when lemonade's servers were in the rotation competing
-for memory. **The replacement p14 board reproduces it with nothing else resident** (`lemond`
-holds no model, 24 MB RSS; GTT 35.8 GiB is llama-server alone). The mechanism is real and
-observed; the open question is what is playing the part of the competing process here.
-
-⚠ **Compare matched protocols only.** The P16s ranged 488 → 297 across 2026-08-21 depending on
-rotation and thermal state. 487.7 is its clean single-server DPM number, which is what the
-table above compares against.
-
-### → Pick up here
-
-1. **The evidence gap: `mclk`/`fclk`/`socclk` were never sampled on the P16s.** They look
-   correct here in isolation but have nothing to compare against. **Extend `bench-dpm.sh` and
-   `bench-prof.sh` to sample all four clock domains, not just `sclk`** — that is the single
-   highest-value change to the harness, and it should have been there from the start.
-2. **Re-seat the DIMMs and re-run `bench-dpm.sh`.** Cheapest possible test of a bad memory
-   train after the move, and it costs one reboot.
-3. **Check channel interleave is actually active.** `dmidecode -t 17` shows both `P0 CHANNEL A`
-   and `P0 CHANNEL B` populated with matched dual-rank parts, which *should* interleave, but
-   nothing has confirmed the board is doing it.
-4. **Check the VRAM carve-out.** It is 8 GB here (`mem_info_vram_total` 8192 MiB) against an
-   inferred 4 GB on the old board; the P16s value was never recorded. It changes where the
-   model's weights sit relative to GTT.
-5. **Run a pure memory-bandwidth microbenchmark** rather than inferring from llama.cpp — a
-   direct number would separate "the board drives this RAM slower" from "something in the
-   GPU memory path". Nothing here does that today.
-6. **Find what is competing.** The signature matches the P16s-under-contention case, so look
-   for a bandwidth consumer that should not be there: the iGPU serving the desktop while the
-   model runs, a compositor or browser doing continuous GPU work, or the 8 GB VRAM carve-out
-   (against an inferred 4 GB on the old board) changing where weights sit. **A run from a bare
-   TTY with the graphical session stopped would isolate the first two cheaply** — and note that
-   every measurement in `dpm-results.tsv` and `prof-results.tsv` was taken with a full desktop,
-   a browser and an agent session running.
-7. **Fallback:** if the memory path checks out, the deficit is in the board's silicon or power
-   tables and the honest conclusion is that the replacement is simply a slower machine than
-   the one it replaced. Say so in `README.md` rather than leaving it open — and it is a
-   warranty conversation.
+**Harness gap, still open:** `bench-dpm.sh` and `bench-prof.sh` sample `sclk` only. Add
+`mclk`/`fclk`/`socclk` — and have the harness record `/proc/cmdline` into the TSV header, which
+would have caught this on the first run.

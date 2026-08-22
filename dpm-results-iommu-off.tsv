@@ -1,0 +1,45 @@
+# p14 DPM {auto,high} interleaved benchmark, 2026-08-22, AFTER restoring amd_iommu=off.
+#
+# This is the confirming A/B for dpm-results.tsv, which was taken earlier the same day on the
+# same boot config EXCEPT that the IOMMU was on. Same board, same DIMMs, same server
+# (llama-test.service), same harness (bench-dpm.sh, 4 interleaved rounds), same power state.
+# The ONLY difference is amd_iommu=off on the kernel command line.
+#
+# amd_iommu=off had been removed on 2026-08-21 at 13:13 to unblock the NPU (XDNA2 needs SVA,
+# SVA needs the IOMMU -- see npu-after-reboot.sh). Restored 2026-08-22, rebooted 13:15.
+# Verified before this run: amd_iommu=off in /proc/cmdline, 0 IOMMU groups, GTT still 49152 MiB.
+#
+# RESULT -- steady state, round 1 dropped, n=3:
+#
+#   arm    metric   IOMMU on   IOMMU off    gain     P16s    vs P16s
+#   auto   PP          350.2       418.1   +19.4%   429.7      -2.7%
+#   auto   TG          19.67       22.59   +14.9%   22.67      -0.3%
+#   auto   sclk       2169.3      1922.3   -11.4%   1971.2      -2.5%
+#   auto   W            24.0        24.0    +0.0%    24.0       0.0%
+#   high   PP          374.9       473.1   +26.2%   487.7      -3.0%
+#   high   TG          17.81       20.65   +16.0%   21.68      -4.7%
+#   high   sclk       2900.0      2891.7    -0.3%  2898.8      -0.2%
+#   high   W            46.7        53.1   +13.7%    54.8      -3.1%
+#
+# CONCLUSION: the IOMMU was the whole thing. +19-26% prefill and +15-16% generation from one
+# boot parameter. The replacement mainboard is now within 3% of the P16s on both arms -- i.e.
+# EXONERATED. The earlier conclusion that this board was "23% slower at the top end" was a
+# confound: it compared a P16s measured with amd_iommu=off against a p14 measured with the
+# IOMMU on. Retracted.
+#
+# Two details that confirm the mechanism rather than just the effect:
+#  1. Power tracks throughput. At dpm-high the GPU now draws 53.1 W where it drew 46.7 W with
+#     the IOMMU on, at the SAME 2900 MHz -- the "low power" was the GPU stalling on address
+#     translation, not a power cap being imposed. It now matches the P16s' 54.8 W.
+#  2. At dpm-auto the IOMMU-off run is FASTER at a LOWER clock (1922 vs 2169 MHz, +19.4% PP).
+#     With the IOMMU on the GPU was clocking higher to compensate and still losing.
+#
+# arm	rep	prompt_n	cache_n	PP	TG	draft%	sclk	busy	W	degC
+dpm-auto	1	18039	0	442.26	23.077	78.11	2138	100	26.1	64.0
+dpm-high	1	18037	0	478.74	21.927	81.86	2900	98	54.0	90.0
+dpm-auto	2	18039	0	419.84	22.160	74.17	1934	100	24.0	69.0
+dpm-high	2	18039	0	473.64	20.480	72.84	2898	99	53.1	94.0
+dpm-auto	3	18039	0	417.13	21.573	71.14	1919	100	24.0	71.0
+dpm-high	3	18037	0	472.52	21.331	78.45	2890	99	53.1	95.0
+dpm-auto	4	18039	0	417.19	24.047	84.68	1914	100	24.0	72.0
+dpm-high	4	18038	0	473.19	20.153	71.14	2887	99	53.1	95.0
