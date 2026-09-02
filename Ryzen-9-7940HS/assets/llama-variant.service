@@ -1,0 +1,14 @@
+[Unit]
+Description=llama.cpp Server (switchable variant) - llm3 Qwen3.6-35B-A3B Q8_0
+After=network.target
+Conflicts=llama-qwen3.6-35b-q8.service
+[Service]
+Type=simple
+WorkingDirectory=/opt/llama
+ExecStart=/usr/local/bin/llama-launch
+Restart=on-failure
+RestartSec=10
+LimitMEMLOCK=infinity
+LimitNOFILE=65536
+[Install]
+WantedBy=multi-user.target

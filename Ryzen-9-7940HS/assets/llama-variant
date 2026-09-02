@@ -1,0 +1,57 @@
+#!/bin/bash
+# Switch the active llama.cpp variant and restart the service.
+#   llama-variant              list variants, show active
+#   llama-variant <name>       switch + restart + verify weights landed on GPU
+set -eu
+VD=/etc/llama-variants
+ACTIVE=/etc/llama-variant.env
+
+# Auto-detect the amdgpu DRM node (index differs per host).
+GTTFILE=""
+for d in /sys/class/drm/card*/device; do
+    [ -f "$d/mem_info_gtt_used" ] && GTTFILE="$d/mem_info_gtt_used" && break
+done
+
+if [ $# -eq 0 ]; then
+    cur=$(grep -h '^LLAMA_VARIANT=' $ACTIVE 2>/dev/null | cut -d= -f2 || echo "<none>")
+    echo "active: $cur"; echo "available:"
+    for f in $VD/*.env; do
+        n=$(basename "$f" .env)
+        printf "  %-18s %s\n" "$n" "$(grep -h '^LLAMA_BIN=' "$f" | cut -d= -f2-)"
+    done
+    exit 0
+fi
+
+NAME="$1"
+[ -f "$VD/$NAME.env" ] || { echo "unknown variant '$NAME'"; echo "try: llama-variant"; exit 1; }
+BIN=$(grep -h '^LLAMA_BIN=' "$VD/$NAME.env" | cut -d= -f2-)
+[ -x "$BIN" ] || { echo "ERROR: binary not executable: $BIN"; exit 1; }
+
+sudo cp "$VD/$NAME.env" "$ACTIVE"
+sudo systemctl stop llama-qwen3.6-35b-q8.service 2>/dev/null || true
+sudo systemctl restart llama-variant.service
+echo -n "waiting for :8080 "
+for i in $(seq 1 90); do
+    curl -s -m 3 http://127.0.0.1:8080/health 2>/dev/null | grep -q ok && break
+    echo -n "."; sleep 5
+done
+echo
+curl -s -m 3 http://127.0.0.1:8080/health | grep -q ok || { echo "FAILED to come up"; journalctl -u llama-variant -n 25 --no-pager; exit 1; }
+
+# Assert weights are on the GPU. llama-server does NOT log Vulkan enumeration at
+# this verbosity, so GTT occupancy is the only reliable signal (CPU fallback ~0).
+echo "active variant : $NAME"
+echo "binary         : $BIN"
+if [ -n "$GTTFILE" ]; then
+    GTT=$(( $(cat "$GTTFILE")/1073741824 ))
+    echo "GTT used       : ${GTT} GiB  ($(dirname $GTTFILE))"
+    [ "$GTT" -lt 20 ] && { echo "WARNING: GTT < 20 GiB - weights may NOT be on the GPU (CPU fallback)"; exit 2; }
+    echo "OK - weights on GPU"
+else
+    echo "WARNING: no amdgpu DRM node found; cannot verify GPU residency"
+fi
+
+# ROCm bundles fail silently if Tensile paths are wrong -- surface it.
+ERRS=$(journalctl -u llama-variant --no-pager -n 500 2>/dev/null | awk '/llama-launch: variant=/{b=""} {b=b$0 ORS} END{printf "%s",b}' | grep -ciE "rocblaslt error|rocblas error|hipModuleLoad failed" || true)
+[ "${ERRS:-0}" -gt 0 ] && echo "WARNING: $ERRS ROCm library errors in this run - check Tensile paths"
+exit 0
