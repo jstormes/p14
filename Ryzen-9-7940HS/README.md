@@ -106,6 +106,37 @@ here within ~1%.
   here). If llm3 ever mysteriously loses ~20%, check this flag first — that
   exact regression happened on the P14s.
 
+## llm3 vs P14s — same model, same bandwidth wall
+
+Both machines serve the identical `Qwen3.6-35B-A3B Q8_0` + MTP over Vulkan/RADV
+with `amd_iommu=off`, and both sit on the same ~89.6 GB/s DDR5-5600 dual-channel
+bus. P14s numbers from the repo root; llm3 numbers from 2026-09-02 above.
+
+| | **llm3** (mini-PC) | **P14s** (laptop) |
+|---|---|---|
+| GPU | Radeon 780M, RDNA 3 `gfx1103`, **12 CU** | Radeon 890M, RDNA 3.5 `gfx1150`, **16 CU** |
+| Prefill | **~400 t/s** @3K, ~380 @8K, ~330 cold/long | **~418 t/s** (DPM auto), 473 at `high`; ~340–375 @41.6K |
+| Generation | **~23 t/s** (spread 20–28) | **~22.6 t/s** |
+| Load power / temp | ~50 W / 68 °C, no throttling | 24 W / 71 °C on `auto`; `high` = 53 W / 95 °C and −8.6% gen |
+| DPM sensitivity | none (dead tie, measured) | large — 14" thermal envelope |
+| Warm-turn latency | full prefill after every restart | ~0.2 s via the disk-cache fork |
+
+- **Generation is a dead tie (~22–23 t/s) and always will be** — decode is purely
+  bandwidth-bound and both are pinned to the same bus. Same tie llm3 fought the
+  P16s to.
+- **Prefill: P14s wins ~+5–15%** depending on depth — but that comes from +33%
+  more CUs, so per CU-GHz llm3 is the *more* efficient machine (echoing the P16s
+  prefill-anomaly finding). The 473 headline needs DPM `high`, which costs the
+  P14s 8.6% generation and a 95 °C package; llm3 gets its numbers at 68 °C with
+  DPM irrelevant.
+- **The P14s's real lead is UX, not throughput**: its disk-cache fork turns a
+  ~97 s cold prefill into ~0.2 s at login. llm3 has no equivalent — the one
+  open idea from the 2026-09-02 review.
+
+One line: as inference engines they are the same machine — identical generation,
+single-digit prefill difference — the P14s trading llm3's thermal indifference
+for portability and a much slicker warm start.
+
 ## Known issues
 
 - **Silent freezes**: llm3 has frozen 3× (ARP-alive / SSH-dead, zero log
