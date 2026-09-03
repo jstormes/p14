@@ -14,6 +14,11 @@ measured on this machine as of **2026-08-22**, not inherited from a vendor doc.
 **Target hardware:** ThinkPad P14s Gen 6 AMD (or similar) — Ryzen AI 9 HX PRO 370, Radeon 890M
 (gfx1150), **96 GB RAM**, Ubuntu 26.04.
 
+**Where to buy:** [ThinkPad P14s Gen 7 AMD, 64 GB DDR5 / 1 TB — Newegg, ~$2,059](https://www.newegg.com/lenovo-thinkpad-14-0-fhd-amd-ryzen-ai-7-pro-450-amd-radeon-graphics-64gb-ddr5-memory-1tb-ssd-black/p/1TS-000E-1EFS8?Item=9SIB0GJM530899).
+Note this is the **Gen 7 refresh (Ryzen AI 7 PRO 450)**, not the Gen 6 / HX PRO 370 these numbers
+were measured on — same machine class and 64 GB dual-channel DDR5, but verify the iGPU CU count
+before expecting identical prefill (generation should match: same bandwidth class).
+
 **What you get** (18k cold prompt, Qwen3.6-35B-A3B Q8_0, `dpm auto`, steady state):
 
 | | |
