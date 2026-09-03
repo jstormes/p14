@@ -95,6 +95,31 @@ cannot), chassis/thermals, and price — not speed. The only ways out of the
 entirely (soldered LPDDR5X at ≥64 GB, or Strix Halo's 256-bit bus — see
 the fleet's Strix Halo node measures 64.7 t/s).
 
+### The "holy grail" tier — 64 GB soldered LPDDR5X (beats llm3, still holds the 35B)
+
+The one escape from the ~22–23 t/s class short of Strix Halo: same-generation
+silicon on **LPDDR5X-7500 (~120 GB/s, +34% over llm3)** with a full 64 GB, so
+generation rises to an estimated **~29–30 t/s** and the 35B Q8_0 + KV still
+fits. Rare because 64 GB soldered configs barely exist (estimates, not
+measured — bench before believing):
+
+| System | CPU / GPU | RAM | Notes |
+|---|---|---|---|
+| [ASUS ProArt P16 **H7606WP-PB99T**](https://eshop.asus.com/us/90nb15k1-m00rp0-proart-p16-h7606-copilot-pc.html) | AI 9 HX 370 / 890M | **64 GB LPDDR5X-7500** | 16" 4K OLED + RTX 5070 you'd pay for but not use; ~$2.5K creator laptop. Older H7606WI 64 GB variants exist in some regions |
+| [GPD Win Max 2 (2024)](https://www.amazon.com/GPD-Handheld-Controls-Keyboard-touchpad/dp/B0CZTPXC2Y) | 8840U / 780M | **64 GB LPDDR5X-7500** | a 10.1" handheld with llm3's exact GPU on a faster bus, plus OCuLink; the cheapest 64 GB LPDDR5X device known |
+
+**SKU traps, per the warning at the top of this page:**
+- ProArt P16: Best Buy's `H7606WP-P16.3KR95070` looks identical but is **32 GB**.
+  Only `-PB99T` (and the 64 GB WI variants) qualify.
+- Zenbook S16 (UM5606) does NOT qualify — caps at 32 GB despite sharing the
+  HX 370 and the marketing.
+- No 7735HS/Rembrandt grail exists: LPDDR5 devices of that generation cap at
+  24–32 GB (Beelink EQR7: 24 GB; NucBox K16, ThinkPad X13 G3/Z13/Z16: 32 GB).
+
+At these prices also compare Strix Halo (256-bit bus, measured 64.7 t/s on the
+fleet's node) — the grail tier only wins when the machine must double as a
+general-purpose laptop/handheld.
+
 ## Ruled out / adjacent
 
 ### Ryzen 7 7735HS / Radeon 680M systems
