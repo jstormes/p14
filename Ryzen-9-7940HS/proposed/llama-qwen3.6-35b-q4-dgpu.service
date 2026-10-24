@@ -1,0 +1,121 @@
+# ============================================================================
+# ⚠ UNTESTED DRAFT — NOT a copy from a live host.
+#
+# Everything in ../assets/ is byte-exact from the running llm3. This file is
+# not: it is a paper design for a Ryzen 9 7950X3D + Radeon RX 7900 XTX 24 GB
+# box that has never been built or benchmarked. See the rationale and the
+# confidence labelling in ../SYSTEMS.md §"Desktop AM5 + discrete GPU".
+#
+# Run the interleaved harness (../benchmarks/) before believing any number
+# attached to this config. Fleet rule.
+#
+# ---------------------------------------------------------------------------
+# WHY THIS SHAPE
+#
+# Binding constraint: 24 GiB VRAM vs a 35.2 GiB Q8_0. KV is cheap on this
+# model (41 blocks, full_attention_interval=4 -> only ~10 carry per-token KV;
+# measured 10.65 KiB/token, 62.8 MiB floor), so weights are what does not fit.
+# Q4_K_XL at 22.9 GB / 21.3 GiB is the only quant in the collection that does,
+# and quant-q8-vs-q4kxl.tsv measured it as prefill-neutral and +15% TG.
+#
+# VRAM budget at -c 98304 (96K):
+#     weights                            21.3  GiB
+#     KV q8_0  (98304 x 10904 B + 63 MiB) ~1.06 GiB
+#     MTP draft KV q8_0                   ~0.2 GiB
+#     compute buffer @ -b 8192 -ub 1024   ~0.9 GiB
+#     ------------------------------------------------
+#     total                              ~23.3 GiB  of ~23.5-24 usable
+#
+# The whole model is VRAM-resident. Do NOT add --n-cpu-moe / -ot to get Q8_0
+# and 256K back: prefill is compute-bound, llama.cpp runs CPU-assigned experts
+# on the CPU backend, and the hybrid lands near ~340 t/s prefill -- *below*
+# llm3's measured 380-400. See ../SYSTEMS.md for the arithmetic.
+#
+# ---------------------------------------------------------------------------
+# HOST PREREQUISITES (differ from llm3 -- read before deploying)
+#
+#  1. Kernel cmdline: use `iommu=pt`. Do NOT carry llm3's `amd_iommu=off`
+#     over -- that +26% was GTT address translation for a system-RAM-resident
+#     model, which no longer applies. Drop amdgpu.gttsize / ttm.pages_limit /
+#     ttm.page_pool_size entirely; there is no GTT residency.
+#
+#  2. Drive the display from the 7950X3D's 2-CU iGPU and leave the 7900 XTX
+#     headless. Reclaims ~0.5-1 GiB of VRAM = another 64K of context.
+#
+#  3. Confirm the XTX is in the CPU-direct x16 slot, not a chipset x4.
+#
+#  4. VERIFY DEVICE ENUMERATION. With both an iGPU and the dGPU present,
+#     `Vulkan0` is not guaranteed to be the XTX:
+#         llama-server --list-devices
+#     Fix `-dev` below to whatever the 7900 XTX actually reports. Pinning the
+#     wrong device silently runs the model on 2 RDNA 2 CUs.
+#
+#  5. 850 W PSU minimum (355 W TBP GPU + 120 W CPU).
+#
+#  6. No cpu-performance.service dependency -- DPM forcing was an APU
+#     thermal-envelope lever and is meaningless for a dGPU.
+#
+# ---------------------------------------------------------------------------
+# FIRST THINGS TO MEASURE (in this order)
+#
+#  1. ROCm vs Vulkan. gfx1100 is a first-class rocBLAS/Tensile target and
+#     needs no HSA_OVERRIDE_GFX_VERSION -- unlike gfx1103/gfx1151, which is
+#     the entire basis of the existing "ROCm is a non-starter" finding. Build
+#     with -DGGML_HIP=ON and A/B it. Highest-value unknown on this box.
+#  2. -ub 1024 vs 2048 vs 4096. llm3's 2048-is-a-plateau result was found on
+#     12 CUs; 96 CUs want wider batches, and -ub trades against context here.
+#  3. -c 262144 with -ctk q4_0 -ctv q4_0 (KV halves to ~5.3 KiB/tok, which
+#     fits). Quality cost unknown -- f16-vs-q8_0 KV was never A/B'd either.
+#
+# DELIBERATELY OMITTED vs ../assets/llama-qwen3.6-35b-q8.service:
+#   RADV_PERFTEST=nogttspill  measured no-op, and GTT-specific
+#   --spec-draft-n-max 2      measured no-op with --spec-type draft-mtp
+#   --mmproj / --image-min-tokens  vision off, buys back ~0.9 GB of VRAM;
+#                             the no-mmproj arm in ../../bench-results.tsv
+#                             measured throughput-neutral. Re-add both if
+#                             vision is needed and drop -c to ~65536.
+# ============================================================================
+
+[Unit]
+Description=llama.cpp Server (Vulkan) - Qwen3.6-35B-A3B UD-Q4_K_XL + MTP, 96K, fully VRAM-resident [7900 XTX draft]
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/llama/llama.cpp
+SupplementaryGroups=render video
+ExecStart=/opt/llama/llama.cpp/build/bin/llama-server \
+  --host 0.0.0.0 \
+  --port 8080 \
+  -m /mnt/data/models/Qwen3.6-35B-A3B-Q4/Qwen3.6-35B-A3B-MTP-UD-Q4_K_XL.gguf \
+  --alias Qwen3.6-35B-A3B-Q4-7900XTX \
+  -ngl 999 \
+  --fit off \
+  --no-mmap \
+  --cache-ram 8192 \
+  --cache-reuse 256 \
+  --cache-type-k q8_0 \
+  --cache-type-v q8_0 \
+  -c 98304 \
+  -b 8192 \
+  -ub 1024 \
+  -np 1 \
+  -fa 1 \
+  --spec-type draft-mtp \
+  --spec-draft-type-k q8_0 \
+  --spec-draft-type-v q8_0 \
+  --jinja --reasoning-budget 2048 \
+  --temp 1.0 \
+  --top-p 0.95 \
+  --top-k 20 \
+  --min-p 0.0 \
+  --presence-penalty 1.5 \
+  -dev Vulkan0
+
+Restart=on-failure
+RestartSec=10
+LimitMEMLOCK=infinity
+LimitNOFILE=65536
+
+[Install]
+WantedBy=multi-user.target
