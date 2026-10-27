@@ -40,7 +40,7 @@ Production unit `llama-qwen3.6-35b-q8.service` (full file in assets/): 256K cont
 --spec-draft-n-max 2`, q8_0 draft KV), vision via mmproj, `--jinja
 --reasoning-budget 2048`, sampling `temp 1.0 / top-p 0.95 / top-k 20 / min-p 0 /
 presence 1.5`. Runs as root with `SupplementaryGroups=render video`.
-**`RADV_PERFTEST=nogttspill` was dropped on 2026-10-26.** It caused DeviceLost crashes on this 576 MiB-VRAM APU, at zero speed cost to remove (see [../RADV-NOGTTSPILL.md](../RADV-NOGTTSPILL.md)). Production now runs `llama-variant` → `b11869-prob-spill`.
+**`RADV_PERFTEST=nogttspill` was dropped on 2026-10-26.** It caused DeviceLost crashes on this 576 MiB-VRAM APU, at zero speed cost to remove (see [../RADV-NOGTTSPILL.md](../RADV-NOGTTSPILL.md)). Production ran `llama-variant` → `b11869-prob-spill` from then, and since **2026-10-27 runs `tb0781-sys-spill`** (strix-halo-llamacpp toolbox v0.7.8.1 `bin/` on system Mesa 26.2.5, no `nogttspill`; `assets/llama-variants/tb0781-sys-spill.env`). Measured against b11869-prob-spill over mirrored launches: prefill +7.3% at 3K, +13.4% at 16.7K, +26.8% at 32K cold (340 → 432 t/s), decode parity, 8-concurrent aggregate −5.2%; 5/5 launches crash-free ([benchmarks/tb0781-vs-b11869-20261027.tsv](benchmarks/tb0781-vs-b11869-20261027.tsv)). Rollback: `llama-variant b11869-prob-spill`.
 
 **Known config drift (as of 2026-09-02, deliberate to leave, but be aware):**
 - Unit `Description` says "3x256K" but the flags are `-np 1 -c 262144` (1×256K).

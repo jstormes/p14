@@ -102,6 +102,9 @@ This matches the earlier P14s/P16s measurement, which found pure noise.
   `RADV_PERFTEST=` line). The launcher (`assets/llama-launch`) now uses
   `${RADV_PERFTEST-nogttspill}` so that an empty value sticks. Verified through the proxy:
   reasoning and structured tool calls work.
+- **llm3, 2026-10-27:** toolbox v0.7.8.1, the build that crashed on 2 of 3 launches above, ran 5/5
+  launches clean once the flag was gone (VRAM peak ≤468 MiB). It is now production there
+  (`tb0781-sys-spill`), because it prefills 7-27% faster than b11869.
 - **P14s / P16s:** their launchers never set it. Unaffected.
 - The old disabled llm3 unit `assets/llama-qwen3.6-35b-q8.service` still sets it. If you ever
   roll back to that unit, delete that line first.
