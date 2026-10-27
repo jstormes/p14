@@ -165,7 +165,8 @@ noise at temp 1.0 swings single runs by ±4 t/s.
 
 - No hardware watchdog / netconsole despite 3 silent freezes (proposed in fleet
   notes 2026-08-27).
-- `RADV_PERFTEST=nogttspill` in the unit is a measured no-op — drop it on a
-  clean rebuild.
+- ~~`RADV_PERFTEST=nogttspill` in the unit is a measured no-op~~ — **it causes DeviceLost
+  crashes; never set it** ([../RADV-NOGTTSPILL.md](../RADV-NOGTTSPILL.md)). Production dropped it
+  2026-10-26 (variant `b11869-prob-spill`); the old unit in `assets/` still has it.
 - Unit `Description` ("3x256K") and the launcher (`-np 2 -kvu`) disagree with
   the production flags (`-np 1`, no `-kvu`) — pick one truth.

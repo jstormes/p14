@@ -68,7 +68,7 @@
 #     fits). Quality cost unknown -- f16-vs-q8_0 KV was never A/B'd either.
 #
 # DELIBERATELY OMITTED vs ../assets/llama-qwen3.6-35b-q8.service:
-#   RADV_PERFTEST=nogttspill  measured no-op, and GTT-specific
+#   RADV_PERFTEST=nogttspill  causes DeviceLost on APUs (../../RADV-NOGTTSPILL.md); unneeded here
 #   --spec-draft-n-max 2      measured no-op with --spec-type draft-mtp
 #   --mmproj / --image-min-tokens  vision off, buys back ~0.9 GB of VRAM;
 #                             the no-mmproj arm in ../../bench-results.tsv

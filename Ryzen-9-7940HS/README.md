@@ -40,7 +40,7 @@ Production unit `llama-qwen3.6-35b-q8.service` (full file in assets/): 256K cont
 --spec-draft-n-max 2`, q8_0 draft KV), vision via mmproj, `--jinja
 --reasoning-budget 2048`, sampling `temp 1.0 / top-p 0.95 / top-k 20 / min-p 0 /
 presence 1.5`. Runs as root with `SupplementaryGroups=render video`.
-`RADV_PERFTEST=nogttspill` is set but measured a no-op (see below).
+**`RADV_PERFTEST=nogttspill` was dropped on 2026-10-26.** It caused DeviceLost crashes on this 576 MiB-VRAM APU, at zero speed cost to remove (see [../RADV-NOGTTSPILL.md](../RADV-NOGTTSPILL.md)). Production now runs `llama-variant` → `b11869-prob-spill`.
 
 **Known config drift (as of 2026-09-02, deliberate to leave, but be aware):**
 - Unit `Description` says "3x256K" but the flags are `-np 1 -c 262144` (1×256K).
@@ -96,7 +96,7 @@ here within ~1%.
 
 ### Measured-negative ledger for this box (don't re-test)
 
-- `RADV_PERFTEST=nogttspill` — no-op (P14s/P16s measurement; still set in the unit, droppable).
+- `RADV_PERFTEST=nogttspill` — **not a no-op: it causes DeviceLost crashes** (`Not enough memory for command submission`). Dropped from production 2026-10-26; speed-neutral (decode −0.4%, prefill −0.3%). See [../RADV-NOGTTSPILL.md](../RADV-NOGTTSPILL.md).
 - Q6_K → Q8_0 gave only **+6% prefill** here vs +22.8% on 16-CU parts — 12 CUs
   lack the ALU headroom to exploit cheap dequant. Quant changes on llm3 buy
   quality/memory, not speed.

@@ -4,6 +4,7 @@ After=network.target cpu-performance.service
 
 [Service]
 Type=simple
+# 2026-10-26: DELETE the next line before re-enabling this unit -- nogttspill causes DeviceLost (../../RADV-NOGTTSPILL.md)
 Environment=RADV_PERFTEST=nogttspill
 WorkingDirectory=/opt/llama/llama.cpp-b10173
 SupplementaryGroups=render video

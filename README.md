@@ -218,6 +218,7 @@ Discard the first rep — the first request after a server start runs a few perc
 | `--mmproj` removal | No gain. Keep vision |
 | AMDVLK, ROCm backends | Slower than RADV for this workload |
 | raising `amdgpu.gttsize` | Buys **capacity, not speed** |
+| `RADV_PERFTEST=nogttspill` | **Never set it.** No speed effect, and on APUs it causes `Not enough memory for command submission` → DeviceLost crashes. See [RADV-NOGTTSPILL.md](RADV-NOGTTSPILL.md) |
 
 ---
 

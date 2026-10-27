@@ -283,7 +283,7 @@ the regime warning above.
 | `amdgpu.gttsize` / `ttm.pages_limit` / `ttm.page_pool_size` | no GTT residency. [TODO.md](../TODO.md) item 10 (gttsize sized for the old 60 GB box) becomes moot |
 | BIOS UMA frame-buffer carve-out | no iGPU in the data path |
 | Mesa version hunt + the 7 `GGML_VK_*` vars | different driver path entirely |
-| `RADV_PERFTEST=nogttspill` | already a measured no-op, and GTT-specific |
+| `RADV_PERFTEST=nogttspill` | causes DeviceLost crashes on the APU ([../RADV-NOGTTSPILL.md](../RADV-NOGTTSPILL.md)); unneeded on a dGPU |
 | DPM `high` vs `auto` forcing | dGPUs manage their own clocks; `cpu-performance.service` is not wanted |
 
 **Transfers:** `-fa 1`; MTP self-speculation (+13%, and `--spec-draft-n-max` is a
