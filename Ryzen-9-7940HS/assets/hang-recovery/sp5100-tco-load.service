@@ -1,0 +1,12 @@
+[Unit]
+Description=Load sp5100_tco hardware watchdog (Ubuntu blacklists it; explicit modprobe bypasses the blacklist)
+DefaultDependencies=no
+Before=sysinit.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/sbin/modprobe sp5100_tco
+
+[Install]
+WantedBy=sysinit.target

@@ -1,0 +1,12 @@
+[Unit]
+Description=netconsole kernel log stream to hermes1:6666
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/local/sbin/netconsole-setup
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,20 @@
+#!/bin/bash
+# Stream kernel messages to hermes1 (netconsole-rx, UDP 6666) via configfs. Idempotent.
+set -eu
+modprobe netconsole
+# network-online can fire before DHCP assigns enp1s0 an address; wait up to 120s for it.
+for i in $(seq 1 120); do
+  IP=$(ip -4 -o addr show dev enp1s0 | awk "{print \$4}" | cut -d/ -f1 | head -1)
+  [ -n "$IP" ] && break; sleep 1
+done
+[ -n "$IP" ] || { echo "netconsole: enp1s0 has no IPv4 after 120s" >&2; exit 1; }
+mountpoint -q /sys/kernel/config || mount -t configfs none /sys/kernel/config
+T=/sys/kernel/config/netconsole/hermes1
+if [ -d $T ]; then [ "$(cat $T/enabled)" = 0 ] || echo 0 > $T/enabled; else mkdir $T; fi
+echo enp1s0            > $T/dev_name
+echo $IP               > $T/local_ip
+echo REMOTE_IP         > $T/remote_ip   # receiver LAN IP (redacted)
+echo REMOTE_MAC        > $T/remote_mac  # receiver MAC (redacted)
+echo 6666              > $T/remote_port
+echo 1 > $T/enabled
+echo "netconsole: llm3 -> hermes1 enabled"

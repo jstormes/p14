@@ -24,31 +24,33 @@ every config file are in [assets/](assets/).
 
 | | |
 |---|---|
-| OS | Ubuntu Server 26.04.1 LTS, kernel `7.0.0-30-generic` |
-| Kernel cmdline | `amdgpu.gttsize=57344 ttm.pages_limit=14680064 ttm.page_pool_size=14680064 amd_iommu=off` |
-| Vulkan | Mesa **26.1.7** (kisak-mesa PPA, not held), RADV; `libvulkan1 1.4.341` |
-| llama.cpp | **b10173** (commit `e9fa0781f`), Vulkan build, gcc, `GGML_NATIVE=ON`, Release, at `/opt/llama/llama.cpp-b10173` |
+| OS | Ubuntu Server 26.04.1 LTS, kernel `7.0.0-43-generic` (as of 2026-11-11) |
+| Kernel cmdline | `amdgpu.gttsize=57344 ttm.pages_limit=14680064 ttm.page_pool_size=14680064 amd_iommu=off` + the `crashkernel=` reservation added by `kdump-tools` |
+| Vulkan | Mesa **26.2.6** (kisak-mesa PPA, not held, so routine `apt upgrade` takes Mesa bumps; 26.2.4/26.2.5/26.2.6 each A/B'd perf-neutral), RADV; `libvulkan1 1.4.341` |
+| llama.cpp | **strix-halo-llamacpp toolbox v0.7.8.1** (`8e9dcfeb`) Vulkan `bin/` on system Mesa, at `/opt/llama/strix-toolbox-0.7.8.1` (production since 2026-10-27). Older source builds kept for rollback: b11869 at `/opt/llama/llama.cpp-b11869`, b10173 (commit `e9fa0781f`, gcc, `GGML_NATIVE=ON`) at `/opt/llama/llama.cpp-b10173` |
 | Backend | Vulkan only. rocBLAS ships no `gfx1103` Tensile kernels, so ROCm is a non-starter here (the repo root's `gfx1151` HSA-override trick does not apply — see OPTIMAL-SETTINGS notes in the fleet docs) |
 | Model | `Qwen3.6-35B-A3B-Q8_0.gguf` (35.2 GiB, unsloth GGUF of [Qwen/Qwen3.6-35B-A3B](https://huggingface.co/Qwen/Qwen3.6-35B-A3B)) + `mmproj-BF16.gguf` (0.9 GiB, vision) |
 | Spare model | `Qwen3.6-35B-A3B-UD-Q6-MTP_K_XL.gguf` (30.4 GiB) kept in `/mnt/data/models/Qwen3.6-35B-A3B-MTP` — the pre-2026-07-30 serving quant, retained for rollback |
 
 ## Served configuration
 
-Production unit `llama-qwen3.6-35b-q8.service` (full file in assets/): 256K context,
-`-np 1`, `-b 8192 -ub 2048`, `-fa 1`, q8_0 KV, `--cache-ram 8192 --cache-reuse 256`,
-`--no-mmap --fit off -ngl 999`, MTP self-speculation (`--spec-type draft-mtp
+Production is `llama-variant.service` → `assets/llama-launch` (see below): 256K context,
+`-np 2 -kvu` (shared KV pool), `-b 8192 -ub 2048`, `-fa 1`, q8_0 KV, `--cache-ram 8192 --cache-reuse 256`,
+`--no-mmap --fit off -ngl 999` (`-lm none` on the b11869/halo arms), `--image-min-tokens 1024`, MTP self-speculation (`--spec-type draft-mtp
 --spec-draft-n-max 2`, q8_0 draft KV), vision via mmproj, `--jinja
 --reasoning-budget 2048`, sampling `temp 1.0 / top-p 0.95 / top-k 20 / min-p 0 /
 presence 1.5`. Runs as root with `SupplementaryGroups=render video`.
 **`RADV_PERFTEST=nogttspill` was dropped on 2026-10-26.** It caused DeviceLost crashes on this 576 MiB-VRAM APU, at zero speed cost to remove (see [../RADV-NOGTTSPILL.md](../RADV-NOGTTSPILL.md)). Production ran `llama-variant` → `b11869-prob-spill` from then, and since **2026-10-27 runs `tb0781-sys-spill`** (strix-halo-llamacpp toolbox v0.7.8.1 `bin/` on system Mesa 26.2.5, no `nogttspill`; `assets/llama-variants/tb0781-sys-spill.env`). Measured against b11869-prob-spill over mirrored launches: prefill +7.3% at 3K, +13.4% at 16.7K, +26.8% at 32K cold (340 → 432 t/s), decode parity, 8-concurrent aggregate −5.2%; 5/5 launches crash-free ([benchmarks/tb0781-vs-b11869-20261027.tsv](benchmarks/tb0781-vs-b11869-20261027.tsv)). Rollback: `llama-variant b11869-prob-spill`.
 
-**Known config drift (as of 2026-09-02, deliberate to leave, but be aware):**
-- Unit `Description` says "3x256K" but the flags are `-np 1 -c 262144` (1×256K).
-- The switchable-variant launcher (`assets/llama-launch`) claims to mirror
-  production but carries `-np 2 -kvu`; the cloud1 proxy comments also say llm3
-  runs `-np 2`. The *running* production unit is `-np 1`, no `-kvu`.
-- `/etc/llama-variant.env` still holds `toolbox-sys` from an old experiment;
-  `llama-variant.service` is disabled, so it is inert.
+**Production unit (since 2026-10-25): `llama-variant.service`** (enabled), which runs
+`assets/llama-launch` with the build selected by `/etc/llama-variant.env`
+(currently `tb0781-sys-spill`). The launcher's flags are what is actually served:
+`-c 262144 -np 2 -kvu` (two slots sharing one unified 256K KV pool; `/props`
+reports `total_slots 2`, `n_ctx 262144`), which matches the cloud1 proxy's
+`-np 2` comment. The old `llama-qwen3.6-35b-q8.service` (`-np 1`, no `-kvu`)
+is **disabled** and kept only as a reference; its `nogttspill` line must be
+removed before it is ever re-enabled. `llama-variant.service` is ordered
+`After=cpu-performance.service` so it still gets the GPU-readiness boot gate.
 
 ## Latest benchmarks (2026-09-02, this hardware, production config)
 
@@ -140,8 +142,11 @@ for portability and a much slicker warm start.
 ## Known issues
 
 - **Silent freezes**: llm3 has frozen 3× (ARP-alive / SSH-dead, zero log
-  forensics; last 2026-08-31, recovered clean on power-cycle). Hardware watchdog
-  + netconsole proposed, not yet deployed. WoL state and MAC recorded in fleet notes.
+  forensics; last 2026-08-31, recovered clean on power-cycle). **Hang recovery
+  deployed 2026-10-25** (`assets/hang-recovery/`, RECREATE step 12): the
+  `sp5100_tco` chipset watchdog petted by systemd (60 s), soft/hard lockup →
+  panic → kdump → auto-reboot, and netconsole streaming kernel messages to
+  another host so the next freeze leaves forensics. No freeze since.
 - The two-model era (35B + small classifier on :8081) ended 2026-08-01;
   classification now rides the single 35B.
 
@@ -149,4 +154,8 @@ for portability and a much slicker warm start.
 
 Byte-exact copies from the live host: `llama-qwen3.6-35b-q8.service`,
 `cpu-performance.service`, `llama-variant.service`, `llama-launch`,
-`llama-variant`, and `llama-variants/` (the three `.env` variant definitions).
+`llama-variant`, and `llama-variants/` (every `.env` variant definition on the
+host, including research arms such as `halo-prob*` and `b11869*`).
+`hang-recovery/` holds the watchdog / panic / netconsole files; the
+netconsole script has the receiver's IP and MAC redacted (`REMOTE_IP`,
+`REMOTE_MAC`).

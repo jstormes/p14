@@ -125,9 +125,16 @@ sudo cp -r assets/llama-variants /etc/
 
 `llama-variant` (no args) lists variants; `llama-variant <name>` stops the
 production unit, starts `llama-variant.service` with that build, and verifies
-weights landed on the GPU. **Caveat:** `llama-launch` currently carries
-`-np 2 -kvu` where production is `-np 1` without `-kvu` — reconcile before
-trusting it as a control arm.
+weights landed on the GPU. **This is now the production path** (since
+2026-10-25): enable it instead of the old unit, then select the production build:
+
+```bash
+sudo systemctl disable --now llama-qwen3.6-35b-q8.service
+sudo systemctl enable llama-variant.service
+sudo llama-variant tb0781-sys-spill      # rollback: llama-variant b11869-prob-spill
+```
+
+The launcher serves `-np 2 -kvu` (2 slots, one shared 256K KV pool).
 
 ## 8. Monitoring niceties
 
@@ -163,10 +170,44 @@ noise at temp 1.0 swings single runs by ±4 t/s.
 
 ## 11. Known gaps to consider fixing on a rebuild
 
-- No hardware watchdog / netconsole despite 3 silent freezes (proposed in fleet
-  notes 2026-08-27).
 - ~~`RADV_PERFTEST=nogttspill` in the unit is a measured no-op~~ — **it causes DeviceLost
   crashes; never set it** ([../RADV-NOGTTSPILL.md](../RADV-NOGTTSPILL.md)). Production dropped it
   2026-10-26 (variant `b11869-prob-spill`; since 2026-10-27 `tb0781-sys-spill`); the old unit in `assets/` still has it.
-- Unit `Description` ("3x256K") and the launcher (`-np 2 -kvu`) disagree with
-  the production flags (`-np 1`, no `-kvu`) — pick one truth.
+- The disabled legacy unit's `Description` ("3x256K") and flags (`-np 1`, no
+  `-kvu`) no longer describe production; the launcher is the one truth now.
+
+## 12. Hang recovery (watchdog + kdump + netconsole)
+
+Deployed 2026-10-25 after three silent freezes with no forensics. Files in
+`assets/hang-recovery/`:
+
+```bash
+sudo apt install kdump-tools        # answer yes to enabling kdump; adds crashkernel= to the cmdline
+sudo cp assets/hang-recovery/sp5100-tco-load.service assets/hang-recovery/netconsole-setup.service /etc/systemd/system/
+sudo mkdir -p /etc/systemd/system.conf.d
+sudo cp assets/hang-recovery/50-watchdog.conf /etc/systemd/system.conf.d/
+sudo cp assets/hang-recovery/60-hang-recovery.conf /etc/sysctl.d/
+sudo install -m 755 assets/hang-recovery/netconsole-setup /usr/local/sbin/
+sudo sed -i 's/REMOTE_IP/<receiver ip>/; s/REMOTE_MAC/<receiver mac>/' /usr/local/sbin/netconsole-setup
+sudo systemctl daemon-reload
+sudo systemctl enable sp5100-tco-load.service netconsole-setup.service
+sudo reboot
+```
+
+- **`sp5100-tco-load.service`**: Ubuntu blacklists `sp5100_tco`, so it never
+  autoloads. An explicit `modprobe` bypasses the blacklist; the unit runs it
+  before `sysinit.target` so `/dev/watchdog0` exists when systemd arms it.
+- **`50-watchdog.conf`**: PID 1 pets `/dev/watchdog0` every 60 s
+  (`RuntimeWatchdogSec=60s`); a hang longer than that makes the chipset reset
+  the box. `RebootWatchdogSec=10min` covers a reboot that wedges.
+- **`60-hang-recovery.conf`**: soft/hard lockups panic (so kdump captures a
+  vmcore in `/var/crash`), `kernel.panic=30` auto-reboots, and `printk 5 4 1 7`
+  forwards KERN_WARNING+ (amdgpu warnings) to the console/netconsole.
+- **`netconsole-setup`**: configures netconsole through configfs once the NIC
+  has an IPv4 address (waits up to 120 s, since `network-online` can fire
+  before DHCP). The receiver just needs a UDP listener on 6666 that writes to
+  a log file.
+
+Verify: `cat /sys/class/watchdog/watchdog0/identity` (→ `SP5100 TCO timer`),
+`systemctl show -p RuntimeWatchdogUSec`, `kdump-config status` (→ ready to
+kdump), and a line arriving at the receiver after `echo test > /dev/kmsg`.
